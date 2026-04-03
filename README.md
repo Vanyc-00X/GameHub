@@ -1,2 +1,3 @@
-# GameHub
-Ваня ультра попуск.
+# gamehub
+
+A new Flutter project.
