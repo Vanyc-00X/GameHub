@@ -16,7 +16,6 @@ class _RegPageState extends State<RegPage> {
   final passController = TextEditingController();
   final repeatPassController = TextEditingController();
   final usernameController = TextEditingController();
-  final loginController = TextEditingController(); // ✅ Добавлен контроллер для login
   
   final AuthServices authService = AuthServices();
   bool _isLoading = false;
@@ -27,7 +26,6 @@ class _RegPageState extends State<RegPage> {
     passController.dispose();
     repeatPassController.dispose();
     usernameController.dispose();
-    loginController.dispose();
     super.dispose();
   }
 
@@ -59,8 +57,6 @@ class _RegPageState extends State<RegPage> {
               ),
               const SizedBox(height: 40),
 
-              _buildTextField(loginController, 'Логин', Icons.person_outline),
-              const SizedBox(height: 16),
               _buildTextField(usernameController, 'Имя пользователя', Icons.person),
               const SizedBox(height: 16),
               _buildTextField(emailController, 'Email', Icons.email),
@@ -145,9 +141,8 @@ class _RegPageState extends State<RegPage> {
 
   Future<void> _register() async {
     // Валидация
-    if (loginController.text.isEmpty || usernameController.text.isEmpty || 
-        emailController.text.isEmpty || passController.text.isEmpty || 
-        repeatPassController.text.isEmpty) {
+    if (usernameController.text.isEmpty || emailController.text.isEmpty ||
+        passController.text.isEmpty || repeatPassController.text.isEmpty) {
       _showSnackBar("Заполните все поля!", Colors.redAccent);
       return;
     }
@@ -165,19 +160,20 @@ class _RegPageState extends State<RegPage> {
     setState(() => _isLoading = true);
 
     try {
-      // ✅ ИСПРАВЛЕНО: signUp вместо singUp + добавлен параметр login
-      final user = await authService.signUp(
-        email: emailController.text.trim(),
-        password: passController.text,
-        login: loginController.text.trim(), // ✅ Передаём login
-        username: usernameController.text.trim(),
+      final user = await authService.singUp(
+        emailController.text.trim(),
+        passController.text,
+        
       );
 
       if (user != null && mounted) {
         debugPrint('✅ Регистрация успешна: ${user.email}');
         
-        // 🔔 Если включено подтверждение email — отключите в Supabase Dashboard:
-        // Authentication → Providers → Email → Disable "Confirm email"
+        // 🔔 Если включено подтверждение email — пользователь получит письмо
+        // Сессия создастся после подтверждения. Для теста отключите в Supabase Dashboard
+        
+        // ✅ Триггер handle_new_user автоматически создаст запись в public."User"
+        // НЕ нужно вручную вызывать userTable.addUserTable()
         
         Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
       } else if (mounted) {
@@ -185,13 +181,7 @@ class _RegPageState extends State<RegPage> {
       }
     } on AuthException catch (e) {
       if (mounted) {
-        String message = e.message;
-        if (message.contains('User already registered')) {
-          message = 'Пользователь с таким email уже существует';
-        } else if (message.contains('Weak password')) {
-          message = 'Слишком слабый пароль';
-        }
-        _showSnackBar(message, Colors.redAccent);
+        _showSnackBar(e.message, Colors.redAccent);
       }
     } catch (e) {
       if (mounted) {

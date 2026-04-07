@@ -56,7 +56,7 @@ class UserService {
   // Получение профиля пользователя из БД
   Future<app_models.User?> getUserProfile(String userId) async {
     final response = await _client
-        .from('users')
+        .from('user')
         .select()
         .eq('id', userId)
         .single();
@@ -102,7 +102,7 @@ class UserService {
   }
 
   Future<void> updateUserAvatar(String userId, String avatarUrl) async {
-    await _client.from('users').update({'avatar': avatarUrl}).eq('id', userId);
+    await _client.from('user').update({'avatar': avatarUrl}).eq('id', userId);
   }
 
   // Обновление профиля пользователя
@@ -120,7 +120,7 @@ class UserService {
     if (updateData.isEmpty) return null;
 
     final response = await _client
-        .from('users')
+        .from('user')
         .update(updateData)
         .eq('id', userId)
         .select()
