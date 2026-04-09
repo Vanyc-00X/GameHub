@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../database/services/profile_service.dart';
 import 'mini_page/auctions_list_page.dart';
 import 'mini_page/edit_profile_page.dart';
+import 'mini_page/reate_auction_page.dart';
 
 class BottomProfile extends StatefulWidget {
   const BottomProfile({super.key});
@@ -239,6 +240,7 @@ class _BottomProfileState extends State<BottomProfile> {
     final activeAuctions = _profileData!['activeAuctions'] as int;
     final completedAuctions = _profileData!['completedAuctions'] as int;
     final rating = _profileData!['rating'] as double;
+    final points = _profileData!['points'] as int? ?? 0; // 👈 Очки пользователя
     final joinedAt = DateTime.parse(_profileData!['joinedAt']);
     final yearsOnPlatform = DateTime.now().difference(joinedAt).inDays ~/ 365;
 
@@ -247,25 +249,62 @@ class _BottomProfileState extends State<BottomProfile> {
         children: [
           const SizedBox(height: 60),
 
-          // 👤 Avatar
-          CircleAvatar(
-            radius: 45,
-            backgroundColor: const Color(0xFF7C3AED),
-            child: user['avatar'] != null && user['avatar'].toString().isNotEmpty
-                ? ClipOval(
-                    child: Image.network(
-                      user['avatar'],
-                      width: 90,
-                      height: 90,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Text("😎", style: TextStyle(fontSize: 50)),
-                      loadingBuilder: (_, child, progress) {
-                        if (progress == null) return child;
-                        return const CircularProgressIndicator();
-                      },
+          // 👤 Avatar + Points Badge
+          Stack(
+            alignment: Alignment.bottomRight,
+            children: [
+              CircleAvatar(
+                radius: 45,
+                backgroundColor: const Color(0xFF7C3AED),
+                child: user['avatar'] != null && user['avatar'].toString().isNotEmpty
+                    ? ClipOval(
+                        child: Image.network(
+                          user['avatar'],
+                          width: 90,
+                          height: 90,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Text("😎", style: TextStyle(fontSize: 50)),
+                          loadingBuilder: (_, child, progress) {
+                            if (progress == null) return child;
+                            return const CircularProgressIndicator();
+                          },
+                        ),
+                      )
+                    : const Text("😎", style: TextStyle(fontSize: 50)),
+              ),
+              // 🏆 Badge с очками
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFF59E0B), Color(0xFFEF4444)],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.orange.withOpacity(0.4),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
-                  )
-                : const Text("😎", style: TextStyle(fontSize: 50)),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.star, size: 14, color: Colors.white),
+                    const SizedBox(width: 4),
+                    Text(
+                      '$points',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
 
           const SizedBox(height: 12),
@@ -282,15 +321,30 @@ class _BottomProfileState extends State<BottomProfile> {
 
           const SizedBox(height: 24),
 
-          // 📊 Stats
+          // 📊 Stats (обновлённые)
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _ProfileStat(value: "$postsCount", label: "Постов"),
-              const SizedBox(width: 40),
-              _ProfileStat(value: "$activeAuctions", label: "Аукционов"),
-              const SizedBox(width: 40),
-              _ProfileStat(value: rating.toString(), label: "Рейтинг"),
+              _ProfileStat(
+                value: "$points", 
+                label: "Очков",
+                icon: Icons.star,
+                color: Colors.orange,
+              ),
+              const SizedBox(width: 30),
+              _ProfileStat(
+                value: "$activeAuctions", 
+                label: "Аукционов",
+                icon: Icons.gavel,
+                color: const Color(0xFF7C3AED),
+              ),
+              const SizedBox(width: 30),
+              _ProfileStat(
+                value: rating.toString(), 
+                label: "Рейтинг",
+                icon: Icons.star_border,
+                color: Colors.yellow,
+              ),
             ],
           ),
 
@@ -318,7 +372,6 @@ class _BottomProfileState extends State<BottomProfile> {
                         ),
                       );
                       
-                      // Если данные обновлены — перезагружаем профиль
                       if (result != null && mounted) {
                         setState(() {
                           _profileData = {
@@ -359,6 +412,19 @@ class _BottomProfileState extends State<BottomProfile> {
           const SizedBox(height: 30),
 
           // 🧭 Menu
+          _ProfileMenuItem(
+            icon: "➕",
+            title: "Создать аукцион",
+            subtitle: "Выставь игру на продажу",
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const CreateAuctionPage(),
+                ),
+              );
+            },
+          ),
           _ProfileMenuItem(
             icon: "🔨",
             title: "Мои аукционы",
@@ -421,11 +487,22 @@ class _BottomProfileState extends State<BottomProfile> {
 
 class _ProfileStat extends StatelessWidget {
   final String value, label;
-  const _ProfileStat({required this.value, required this.label});
+  final IconData icon;
+  final Color color;
+  
+  const _ProfileStat({
+    required this.value, 
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+  
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(height: 4),
         Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
         Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
       ],
@@ -437,6 +514,7 @@ class _ProfileMenuItem extends StatelessWidget {
   final String icon, title, subtitle;
   final bool isLogout;
   final VoidCallback? onTap;
+  
   const _ProfileMenuItem({
     required this.icon,
     required this.title,
@@ -444,6 +522,7 @@ class _ProfileMenuItem extends StatelessWidget {
     this.isLogout = false,
     this.onTap,
   });
+  
   @override
   Widget build(BuildContext context) {
     return ListTile(
