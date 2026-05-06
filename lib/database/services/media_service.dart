@@ -34,6 +34,7 @@ class MediaService {
   static const String chatBucket = 'chat-media';
   static const String postBucket = 'post-media';
   static const String fallbackBucket = 'avatars';
+  static const String sharedBucket = 'media';
 
   final _uuid = const Uuid();
 
@@ -41,14 +42,12 @@ class MediaService {
     required dynamic chatId,
     required File file,
     String? contentType,
-  }) =>
-      _upload(bucket: chatBucket, file: file, contentType: contentType);
+  }) => _upload(bucket: chatBucket, file: file, contentType: contentType);
 
   Future<UploadedMedia?> uploadPostMedia({
     required File file,
     String? contentType,
-  }) =>
-      _upload(bucket: postBucket, file: file, contentType: contentType);
+  }) => _upload(bucket: postBucket, file: file, contentType: contentType);
 
   Future<UploadedMedia?> _upload({
     required String bucket,
@@ -64,64 +63,41 @@ class MediaService {
       final objectPath = '${user.id}/$fileName';
       final bytes = await file.readAsBytes();
 
-      final targetBucket =
-          await _resolveBucket(bucket: bucket, objectPath: objectPath);
-      if (targetBucket == null) {
-        throw Exception(
-          'Не найден ни один доступный бакет для медиа. Накатите SQL миграции 013 и 016.',
-        );
+      final preferred = [bucket, sharedBucket, fallbackBucket];
+      final tried = <String>{};
+      for (final b in preferred) {
+        if (!tried.add(b)) continue;
+        try {
+          await _sb.storage
+              .from(b)
+              .uploadBinary(
+                objectPath,
+                bytes,
+                fileOptions: FileOptions(
+                  contentType: contentType,
+                  upsert: false,
+                ),
+              );
+          final publicUrl = _sb.storage.from(b).getPublicUrl(objectPath);
+          return UploadedMedia(
+            url: publicUrl,
+            storagePath: objectPath,
+            bucket: b,
+            name: p.basename(file.path),
+            sizeBytes: bytes.length,
+            mime: contentType,
+          );
+        } catch (e) {
+          debugPrint('MediaService.upload fail for bucket "$b": $e');
+        }
       }
-
-      await _sb.storage.from(targetBucket).uploadBinary(
-        objectPath,
-        bytes,
-        fileOptions: FileOptions(
-          contentType: contentType,
-          upsert: false,
-        ),
-      );
-
-      final publicUrl = _sb.storage.from(targetBucket).getPublicUrl(objectPath);
-      return UploadedMedia(
-        url: publicUrl,
-        storagePath: objectPath,
-        bucket: targetBucket,
-        name: p.basename(file.path),
-        sizeBytes: bytes.length,
-        mime: contentType,
+      throw Exception(
+        'Не удалось загрузить файл. Проверьте Storage bucket: '
+        '"$bucket" (или "$sharedBucket"/"$fallbackBucket") и RLS policy на INSERT/SELECT.',
       );
     } catch (e, st) {
       debugPrint('MediaService.upload ошибка: $e\n$st');
       return null;
-    }
-  }
-
-  Future<String?> _resolveBucket({
-    required String bucket,
-    required String objectPath,
-  }) async {
-    if (await _bucketAvailable(bucket, objectPath)) return bucket;
-    if (await _bucketAvailable(fallbackBucket, objectPath)) {
-      debugPrint(
-        'MediaService: бакет "$bucket" не найден, fallback -> "$fallbackBucket"',
-      );
-      return fallbackBucket;
-    }
-    return null;
-  }
-
-  Future<bool> _bucketAvailable(String bucket, String objectPath) async {
-    try {
-      await _sb.storage.from(bucket).list(path: p.dirname(objectPath));
-      return true;
-    } catch (e) {
-      final text = e.toString().toLowerCase();
-      if (text.contains('bucket not found') || text.contains('statuscode: 404')) {
-        return false;
-      }
-      // Если бакет существует, но list запретили RLS-ом — считаем доступным
-      // и пробуем upload, чтобы не отбрасывать валидный путь.
-      return true;
     }
   }
 }

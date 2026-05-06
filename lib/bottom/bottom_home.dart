@@ -489,6 +489,7 @@ class _DiscountCard extends StatelessWidget {
         children: [
           Text(emoji, style: const TextStyle(fontSize: 32)),
           const SizedBox(width: 12),
+   
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

@@ -2,6 +2,11 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 final SupabaseClient _sb = Supabase.instance.client;
+const List<String> _ratingTables = ['User_rating', 'user_rating'];
+const List<String> _ratingStatsViews = [
+  'User_rating_stats',
+  'user_rating_stats',
+];
 
 /// Роли в сделке: оценивают по завершённому аукциону.
 enum RatingRole { seller, buyer }
@@ -40,7 +45,9 @@ class RatingService {
     if (stars < 1 || stars > 5) return 'Оценка должна быть от 1 до 5';
 
     try {
-      await _sb.from('User_rating').upsert({
+      final table = await _resolveFirstExisting(_ratingTables);
+      if (table == null) return 'Рейтинг пока недоступен в этой версии БД';
+      await _sb.from(table).upsert({
         'rater_id': me.id,
         'target_id': targetId,
         'auction_id': auctionId,
@@ -57,8 +64,10 @@ class RatingService {
 
   Future<RatingStats> getStats(String userId) async {
     try {
+      final view = await _resolveFirstExisting(_ratingStatsViews);
+      if (view == null) return const RatingStats.empty();
       final row = await _sb
-          .from('User_rating_stats')
+          .from(view)
           .select('avg_stars, ratings_count')
           .eq('user_id', userId)
           .maybeSingle();
@@ -72,11 +81,15 @@ class RatingService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> latestReviews(String userId,
-      {int limit = 10}) async {
+  Future<List<Map<String, dynamic>>> latestReviews(
+    String userId, {
+    int limit = 10,
+  }) async {
     try {
+      final table = await _resolveFirstExisting(_ratingTables);
+      if (table == null) return [];
       final rows = await _sb
-          .from('User_rating')
+          .from(table)
           .select('id, stars, comment, role, created_at, rater_id, auction_id')
           .eq('target_id', userId)
           .order('created_at', ascending: false)
@@ -126,8 +139,12 @@ class RatingService {
         return (allowed: false, targetId: null, reason: 'Нет прав на оценку');
       }
 
+      final table = await _resolveFirstExisting(_ratingTables);
+      if (table == null) {
+        return (allowed: false, targetId: target, reason: 'Рейтинг недоступен');
+      }
       final existing = await _sb
-          .from('User_rating')
+          .from(table)
           .select('id')
           .eq('rater_id', me.id)
           .eq('auction_id', auctionId)
@@ -141,5 +158,15 @@ class RatingService {
       debugPrint('RatingService.canRate ошибка: $e');
       return (allowed: false, targetId: null, reason: '$e');
     }
+  }
+
+  Future<String?> _resolveFirstExisting(List<String> candidates) async {
+    for (final t in candidates) {
+      try {
+        await _sb.from(t).select('id').limit(1);
+        return t;
+      } catch (_) {}
+    }
+    return null;
   }
 }

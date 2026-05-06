@@ -8,8 +8,9 @@ class AuctionsListPage extends StatefulWidget {
   State<AuctionsListPage> createState() => _AuctionsListPageState();
 }
 
-class _AuctionsListPageState extends State<AuctionsListPage> 
+class _AuctionsListPageState extends State<AuctionsListPage>
     with SingleTickerProviderStateMixin {
+  static const List<String> _userTables = ['User', 'users', 'user', '"User"'];
   late TabController _tabController;
   bool _isLoading = true;
   List<Map<String, dynamic>> _myAuctionsActive = [];
@@ -53,7 +54,9 @@ class _AuctionsListPageState extends State<AuctionsListPage>
       // 2️⃣ МОИ аукционы (завершённые)
       final myCompleted = await Supabase.instance.client
           .from('Auction_items')
-          .select('id, title, url_item, start_price, ended_at, bid_count, winner_id')
+          .select(
+            'id, title, url_item, start_price, ended_at, bid_count, winner_id',
+          )
           .eq('owner_id', userId)
           .eq('is_active', false)
           .order('ended_at', ascending: false);
@@ -73,11 +76,7 @@ class _AuctionsListPageState extends State<AuctionsListPage>
               ended_at,
               bid_count,
               is_active,
-              owner_id,
-              User!auction_items_owner_id_fkey (
-                login,
-                username
-              )
+              owner_id
             )
           ''')
           .eq('user_id', userId)
@@ -87,7 +86,7 @@ class _AuctionsListPageState extends State<AuctionsListPage>
       // Извлекаем уникальные аукционы из ставок
       final Set<int> seenAuctionIds = {};
       final List<Map<String, dynamic>> myBidsList = [];
-      
+
       for (var bid in bidsResponse) {
         final auction = bid['Auction_items'] as Map<String, dynamic>?;
         if (auction != null && !seenAuctionIds.contains(auction['id'])) {
@@ -98,6 +97,16 @@ class _AuctionsListPageState extends State<AuctionsListPage>
             'bid_time': bid['created_at'],
           });
         }
+      }
+      final ownerIds = myBidsList
+          .map((e) => e['owner_id']?.toString())
+          .whereType<String>()
+          .where((e) => e.isNotEmpty)
+          .toSet();
+      final usersById = await _loadUsersByIds(ownerIds);
+      for (final auction in myBidsList) {
+        final ownerId = auction['owner_id']?.toString();
+        auction['User'] = usersById[ownerId] ?? const <String, dynamic>{};
       }
 
       if (mounted) {
@@ -116,6 +125,30 @@ class _AuctionsListPageState extends State<AuctionsListPage>
         });
       }
     }
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _loadUsersByIds(
+    Set<String> ids,
+  ) async {
+    if (ids.isEmpty) return const {};
+    final client = Supabase.instance.client;
+    for (final table in _userTables) {
+      try {
+        final rows = await client
+            .from(table)
+            .select('id, login, username')
+            .inFilter('id', ids.toList());
+        return {
+          for (final row in List<Map<String, dynamic>>.from(rows as List))
+            row['id'].toString(): {
+              'id': row['id'],
+              'login': row['login'],
+              'username': row['username'],
+            },
+        };
+      } catch (_) {}
+    }
+    return const {};
   }
 
   String _formatPrice(int price) {
@@ -139,12 +172,12 @@ class _AuctionsListPageState extends State<AuctionsListPage>
     try {
       final end = DateTime.parse(endedAt);
       final diff = end.difference(DateTime.now());
-      
+
       if (diff.isNegative) return 'Завершён';
-      
+
       final hours = diff.inHours;
       final minutes = diff.inMinutes.remainder(60);
-      
+
       if (hours > 0) {
         return '$hours ч ${minutes}м';
       }
@@ -174,7 +207,10 @@ class _AuctionsListPageState extends State<AuctionsListPage>
           indicatorColor: const Color(0xFF7C3AED),
           labelColor: const Color(0xFF7C3AED),
           unselectedLabelColor: Colors.grey,
-          labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          labelStyle: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
           // 🔧 3 вкладки
           tabs: const [
             Tab(text: '📤 Мои'),
@@ -186,33 +222,49 @@ class _AuctionsListPageState extends State<AuctionsListPage>
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('⚠️ $_error', style: const TextStyle(color: Colors.red)),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: _loadAuctions,
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7C3AED)),
-                        child: const Text('Повторить'),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('⚠️ $_error', style: const TextStyle(color: Colors.red)),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: _loadAuctions,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF7C3AED),
+                    ),
+                    child: const Text('Повторить'),
                   ),
-                )
-              : TabBarView(
-                  controller: _tabController,
-                  // 🔧 3 детей, соответствует 3 вкладкам
-                  children: [
-                    _buildAuctionList(_myAuctionsActive, 'Нет активных аукционов', showOwner: false),
-                    _buildAuctionList(_myAuctionsCompleted, 'Нет завершённых аукционов', showOwner: false, showWinner: true),
-                    _buildBidsList(_myBids, 'Вы пока не делали ставок'),
-                  ],
+                ],
+              ),
+            )
+          : TabBarView(
+              controller: _tabController,
+              // 🔧 3 детей, соответствует 3 вкладкам
+              children: [
+                _buildAuctionList(
+                  _myAuctionsActive,
+                  'Нет активных аукционов',
+                  showOwner: false,
                 ),
+                _buildAuctionList(
+                  _myAuctionsCompleted,
+                  'Нет завершённых аукционов',
+                  showOwner: false,
+                  showWinner: true,
+                ),
+                _buildBidsList(_myBids, 'Вы пока не делали ставок'),
+              ],
+            ),
     );
   }
 
-  Widget _buildAuctionList(List<Map<String, dynamic>> auctions, String emptyMessage, {bool showOwner = false, bool showWinner = false}) {
+  Widget _buildAuctionList(
+    List<Map<String, dynamic>> auctions,
+    String emptyMessage, {
+    bool showOwner = false,
+    bool showWinner = false,
+  }) {
     if (auctions.isEmpty) {
       return Center(
         child: Column(
@@ -220,7 +272,10 @@ class _AuctionsListPageState extends State<AuctionsListPage>
           children: [
             Icon(Icons.gavel, size: 80, color: Colors.grey.withOpacity(0.5)),
             const SizedBox(height: 16),
-            Text(emptyMessage, style: const TextStyle(color: Colors.grey, fontSize: 16)),
+            Text(
+              emptyMessage,
+              style: const TextStyle(color: Colors.grey, fontSize: 16),
+            ),
           ],
         ),
       );
@@ -241,7 +296,10 @@ class _AuctionsListPageState extends State<AuctionsListPage>
     );
   }
 
-  Widget _buildBidsList(List<Map<String, dynamic>> auctions, String emptyMessage) {
+  Widget _buildBidsList(
+    List<Map<String, dynamic>> auctions,
+    String emptyMessage,
+  ) {
     if (auctions.isEmpty) {
       return Center(
         child: Column(
@@ -249,9 +307,15 @@ class _AuctionsListPageState extends State<AuctionsListPage>
           children: [
             Icon(Icons.money, size: 80, color: Colors.grey.withOpacity(0.5)),
             const SizedBox(height: 16),
-            Text(emptyMessage, style: const TextStyle(color: Colors.grey, fontSize: 16)),
+            Text(
+              emptyMessage,
+              style: const TextStyle(color: Colors.grey, fontSize: 16),
+            ),
             const SizedBox(height: 8),
-            const Text('Найдите аукционы и делайте ставки!', style: TextStyle(color: Colors.grey)),
+            const Text(
+              'Найдите аукционы и делайте ставки!',
+              style: TextStyle(color: Colors.grey),
+            ),
           ],
         ),
       );
@@ -272,7 +336,10 @@ class _AuctionsListPageState extends State<AuctionsListPage>
     );
   }
 
-  Widget _buildAuctionCard(Map<String, dynamic> auction, {bool showWinner = false}) {
+  Widget _buildAuctionCard(
+    Map<String, dynamic> auction, {
+    bool showWinner = false,
+  }) {
     final title = auction['title'] ?? 'Без названия';
     final imageUrl = auction['url_item'] as String?;
     final startPrice = auction['start_price'] as int? ?? 0;
@@ -290,7 +357,9 @@ class _AuctionsListPageState extends State<AuctionsListPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ClipRRect(
-            borderRadius: const BorderRadius.horizontal(left: Radius.circular(16)),
+            borderRadius: const BorderRadius.horizontal(
+              left: Radius.circular(16),
+            ),
             child: imageUrl != null && imageUrl.isNotEmpty
                 ? Image.network(
                     imageUrl,
@@ -301,14 +370,22 @@ class _AuctionsListPageState extends State<AuctionsListPage>
                       height: 120,
                       width: 120,
                       color: const Color(0xFF2A2A3E),
-                      child: const Icon(Icons.image, size: 40, color: Colors.grey),
+                      child: const Icon(
+                        Icons.image,
+                        size: 40,
+                        color: Colors.grey,
+                      ),
                     ),
                   )
                 : Container(
                     height: 120,
                     width: 120,
                     color: const Color(0xFF2A2A3E),
-                    child: const Icon(Icons.image, size: 40, color: Colors.grey),
+                    child: const Icon(
+                      Icons.image,
+                      size: 40,
+                      color: Colors.grey,
+                    ),
                   ),
           ),
           Expanded(
@@ -332,27 +409,39 @@ class _AuctionsListPageState extends State<AuctionsListPage>
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       _buildInfoChip('💰 ${_formatPrice(startPrice)} ₽'),
-                      _buildInfoChip('🔨 $bidCount ${_pluralize(bidCount, "ставка", "ставки", "ставок")}'),
+                      _buildInfoChip(
+                        '🔨 $bidCount ${_pluralize(bidCount, "ставка", "ставки", "ставок")}',
+                      ),
                     ],
                   ),
                   if (endedAt != null) ...[
                     const SizedBox(height: 6),
                     Text(
                       '⏰ ${_getTimeRemaining(endedAt)}',
-                      style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                   if (showWinner && winnerId != null) ...[
                     const SizedBox(height: 6),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.green.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: const Text(
                         '✅ Продано',
-                        style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w600),
+                        style: TextStyle(
+                          color: Colors.green,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],
@@ -372,21 +461,26 @@ class _AuctionsListPageState extends State<AuctionsListPage>
     final myBidPrice = auction['my_bid_price'] as int? ?? 0;
     final bidTime = auction['bid_time'] as String?;
     final isActive = auction['is_active'] as bool? ?? false;
-    final ownerLogin = (auction['User'] as Map<String, dynamic>?)?['login'] ?? 'Unknown';
+    final ownerLogin =
+        (auction['User'] as Map<String, dynamic>?)?['login'] ?? 'Unknown';
 
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A2E),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isActive ? const Color(0xFF7C3AED).withOpacity(0.5) : Colors.grey.withOpacity(0.3),
+          color: isActive
+              ? const Color(0xFF7C3AED).withOpacity(0.5)
+              : Colors.grey.withOpacity(0.3),
         ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ClipRRect(
-            borderRadius: const BorderRadius.horizontal(left: Radius.circular(16)),
+            borderRadius: const BorderRadius.horizontal(
+              left: Radius.circular(16),
+            ),
             child: imageUrl != null && imageUrl.isNotEmpty
                 ? Image.network(
                     imageUrl,
@@ -397,14 +491,22 @@ class _AuctionsListPageState extends State<AuctionsListPage>
                       height: 120,
                       width: 120,
                       color: const Color(0xFF2A2A3E),
-                      child: const Icon(Icons.image, size: 40, color: Colors.grey),
+                      child: const Icon(
+                        Icons.image,
+                        size: 40,
+                        color: Colors.grey,
+                      ),
                     ),
                   )
                 : Container(
                     height: 120,
                     width: 120,
                     color: const Color(0xFF2A2A3E),
-                    child: const Icon(Icons.image, size: 40, color: Colors.grey),
+                    child: const Icon(
+                      Icons.image,
+                      size: 40,
+                      color: Colors.grey,
+                    ),
                   ),
           ),
           Expanded(
@@ -429,7 +531,10 @@ class _AuctionsListPageState extends State<AuctionsListPage>
                       ),
                       if (!isActive)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.grey.withOpacity(0.3),
                             borderRadius: BorderRadius.circular(4),
@@ -450,17 +555,27 @@ class _AuctionsListPageState extends State<AuctionsListPage>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      _buildInfoChip('💰 ${_formatPrice(startPrice)} ₽', color: Colors.grey),
+                      _buildInfoChip(
+                        '💰 ${_formatPrice(startPrice)} ₽',
+                        color: Colors.grey,
+                      ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
-                          color: isActive ? const Color(0xFF34D399).withOpacity(0.2) : Colors.grey.withOpacity(0.2),
+                          color: isActive
+                              ? const Color(0xFF34D399).withOpacity(0.2)
+                              : Colors.grey.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           'Ваша: ${_formatPrice(myBidPrice)} ₽',
                           style: TextStyle(
-                            color: isActive ? const Color(0xFF34D399) : Colors.grey,
+                            color: isActive
+                                ? const Color(0xFF34D399)
+                                : Colors.grey,
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                           ),
