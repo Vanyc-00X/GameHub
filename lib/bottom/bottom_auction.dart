@@ -18,6 +18,7 @@ class BottomAuction extends StatefulWidget {
 
 class _BottomAuctionState extends State<BottomAuction>
     with SingleTickerProviderStateMixin {
+  static const List<String> _userTables = ['User', 'users', 'user', '"User"'];
   late final TabController _tab;
 
   bool _isLoading = true;
@@ -59,25 +60,25 @@ class _BottomAuctionState extends State<BottomAuction>
 
       final res = await client
           .from('Auction_items')
-          .select('''
-            id,
-            title,
-            url_item,
-            start_price,
-            bid_count,
-            ended_at,
-            is_active,
-            owner_id,
-            User!auction_items_owner_id_fkey (
-              username,
-              login
-            )
-          ''')
+          .select(
+            'id, title, url_item, start_price, bid_count, ended_at, is_active, owner_id',
+          )
           .eq('is_active', true)
           .gt('ended_at', now)
           .order('ended_at', ascending: true);
 
       final list = List<Map<String, dynamic>>.from(res);
+      final activeUsers = await _loadUsersByIds(
+        list
+            .map((e) => e['owner_id']?.toString())
+            .whereType<String>()
+            .where((e) => e.isNotEmpty)
+            .toSet(),
+      );
+      for (final row in list) {
+        final ownerId = row['owner_id']?.toString();
+        row['User'] = activeUsers[ownerId] ?? const <String, dynamic>{};
+      }
       final ids = list.map((e) => (e['id'] as num).toInt()).toList();
 
       final Map<int, int> maxBids = {};
@@ -99,33 +100,47 @@ class _BottomAuctionState extends State<BottomAuction>
       if (me != null) {
         final finRes = await client
             .from('Auction_items')
-            .select('''
-              id,
-              title,
-              url_item,
-              start_price,
-              ended_at,
-              is_active,
-              owner_id,
-              winner_id,
-              User!auction_items_owner_id_fkey (username, login),
-              Winner:User!auction_items_winner_id_fkey (username, login)
-            ''')
+            .select(
+              'id, title, url_item, start_price, ended_at, is_active, owner_id, winner_id',
+            )
             .eq('is_active', false)
             .not('winner_id', 'is', null)
             .or('owner_id.eq.$me,winner_id.eq.$me')
             .order('ended_at', ascending: false)
             .limit(30);
         finished = List<Map<String, dynamic>>.from(finRes);
+        final finishedUsers = await _loadUsersByIds(
+          finished
+              .expand(
+                (e) => [e['owner_id']?.toString(), e['winner_id']?.toString()],
+              )
+              .whereType<String>()
+              .where((e) => e.isNotEmpty)
+              .toSet(),
+        );
+        for (final row in finished) {
+          final ownerId = row['owner_id']?.toString();
+          final winnerId = row['winner_id']?.toString();
+          row['User'] = finishedUsers[ownerId] ?? const <String, dynamic>{};
+          row['Winner'] = finishedUsers[winnerId] ?? const <String, dynamic>{};
+        }
 
-        final existing = await client
-            .from('User_rating')
-            .select('auction_id, role')
-            .eq('rater_id', me);
+        List<Map<String, dynamic>> existingRows = const [];
+        try {
+          final existing = await client
+              .from('User_rating')
+              .select('auction_id, role')
+              .eq('rater_id', me);
+          existingRows = List<Map<String, dynamic>>.from(existing as List);
+        } catch (e) {
+          // Если рейтинг-таблица не накатана в окружении, аукционы всё равно
+          // должны загружаться без кнопки повторной оценки.
+          debugPrint('User_rating is unavailable, skip rated state: $e');
+          existingRows = const [];
+        }
         _ratedKeys
           ..clear()
-          ..addAll(List<Map<String, dynamic>>.from(existing)
-              .map((r) => '${r['auction_id']}:${r['role']}'));
+          ..addAll(existingRows.map((r) => '${r['auction_id']}:${r['role']}'));
       }
 
       if (mounted) {
@@ -146,6 +161,35 @@ class _BottomAuctionState extends State<BottomAuction>
         });
       }
     }
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _loadUsersByIds(
+    Set<String> ids,
+  ) async {
+    if (ids.isEmpty) return const {};
+    final client = Supabase.instance.client;
+    Object? lastError;
+    for (final table in _userTables) {
+      try {
+        final rows = await client
+            .from(table)
+            .select('id, username, login')
+            .inFilter('id', ids.toList());
+        final list = List<Map<String, dynamic>>.from(rows as List);
+        return {
+          for (final row in list)
+            row['id'].toString(): {
+              'id': row['id'],
+              'username': row['username'],
+              'login': row['login'],
+            },
+        };
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    debugPrint('Failed to load users for auctions: $lastError');
+    return const {};
   }
 
   int _currentPrice(int auctionId, int startPrice) {
@@ -208,7 +252,9 @@ class _BottomAuctionState extends State<BottomAuction>
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF7C3AED)),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF7C3AED),
+            ),
             child: const Text('Поставить'),
           ),
         ],
@@ -218,9 +264,9 @@ class _BottomAuctionState extends State<BottomAuction>
     if (ok != true) return;
     if (me == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Войдите в аккаунт')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Войдите в аккаунт')));
       }
       return;
     }
@@ -240,9 +286,9 @@ class _BottomAuctionState extends State<BottomAuction>
 
     if (err != null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(err)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(err)));
       }
     } else {
       if (mounted) {
@@ -408,14 +454,17 @@ class _BottomAuctionState extends State<BottomAuction>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text('⚠️ $_error',
-              style: const TextStyle(color: Colors.red),
-              textAlign: TextAlign.center),
+          Text(
+            '⚠️ $_error',
+            style: const TextStyle(color: Colors.red),
+            textAlign: TextAlign.center,
+          ),
           const SizedBox(height: 16),
           ElevatedButton(
             onPressed: _loadAuctions,
             style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF7C3AED)),
+              backgroundColor: const Color(0xFF7C3AED),
+            ),
             child: const Text('Повторить'),
           ),
         ],
@@ -438,11 +487,15 @@ class _BottomAuctionState extends State<BottomAuction>
             children: [
               const Icon(Icons.gavel, size: 64, color: Colors.grey),
               const SizedBox(height: 16),
-              const Text('Сейчас нет активных аукционов',
-                  style: TextStyle(color: Colors.grey, fontSize: 16)),
+              const Text(
+                'Сейчас нет активных аукционов',
+                style: TextStyle(color: Colors.grey, fontSize: 16),
+              ),
               const SizedBox(height: 8),
-              const Text('Создай аукцион — его увидят все',
-                  style: TextStyle(color: Colors.white54, fontSize: 14)),
+              const Text(
+                'Создай аукцион — его увидят все',
+                style: TextStyle(color: Colors.white54, fontSize: 14),
+              ),
               const SizedBox(height: 20),
               ElevatedButton.icon(
                 onPressed: () {
@@ -458,7 +511,9 @@ class _BottomAuctionState extends State<BottomAuction>
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF7C3AED),
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 24, vertical: 12),
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
                 ),
               ),
             ],
@@ -468,29 +523,26 @@ class _BottomAuctionState extends State<BottomAuction>
     }
 
     return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, i) {
-          final a = _auctions[i];
-          final id = (a['id'] as num).toInt();
-          final start = (a['start_price'] as num).toInt();
-          final cur = _currentPrice(id, start);
-          final title = a['title'] as String? ?? 'Лот';
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: _AuctionCardDb(
-              title: title,
-              seller:
-                  '@${(a['User'] as Map<String, dynamic>?)?['login'] ?? 'unknown'}',
-              imageUrl: a['url_item'] as String? ?? '',
-              bidCount: (a['bid_count'] as num?)?.toInt() ?? 0,
-              timeLeft: _formatTimeRemaining('${a['ended_at']}'),
-              currentPoints: _formatPoints(cur),
-              onBid: () => _onBid(id, start, title: title),
-            ),
-          );
-        },
-        childCount: _auctions.length,
-      ),
+      delegate: SliverChildBuilderDelegate((context, i) {
+        final a = _auctions[i];
+        final id = (a['id'] as num).toInt();
+        final start = (a['start_price'] as num).toInt();
+        final cur = _currentPrice(id, start);
+        final title = a['title'] as String? ?? 'Лот';
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          child: _AuctionCardDb(
+            title: title,
+            seller:
+                '@${(a['User'] as Map<String, dynamic>?)?['login'] ?? 'unknown'}',
+            imageUrl: a['url_item'] as String? ?? '',
+            bidCount: (a['bid_count'] as num?)?.toInt() ?? 0,
+            timeLeft: _formatTimeRemaining('${a['ended_at']}'),
+            currentPoints: _formatPoints(cur),
+            onBid: () => _onBid(id, start, title: title),
+          ),
+        );
+      }, childCount: _auctions.length),
     );
   }
 
@@ -512,39 +564,33 @@ class _BottomAuctionState extends State<BottomAuction>
     final me = Supabase.instance.client.auth.currentUser?.id;
 
     return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, i) {
-          final a = _finished[i];
-          final id = (a['id'] as num).toInt();
-          final ownerId = a['owner_id']?.toString();
-          final winnerId = a['winner_id']?.toString();
-          final isOwner = ownerId == me;
-          final role =
-              isOwner ? RatingRole.buyer : RatingRole.seller;
-          final ratedKey = '$id:${role.dbValue}';
-          final alreadyRated = _ratedKeys.contains(ratedKey);
+      delegate: SliverChildBuilderDelegate((context, i) {
+        final a = _finished[i];
+        final id = (a['id'] as num).toInt();
+        final ownerId = a['owner_id']?.toString();
+        final winnerId = a['winner_id']?.toString();
+        final isOwner = ownerId == me;
+        final role = isOwner ? RatingRole.buyer : RatingRole.seller;
+        final ratedKey = '$id:${role.dbValue}';
+        final alreadyRated = _ratedKeys.contains(ratedKey);
 
-          final u =
-              (isOwner ? a['Winner'] : a['User']) as Map<String, dynamic>?;
-          final target =
-              u != null ? '@${u['login'] ?? 'unknown'}' : '@unknown';
+        final u = (isOwner ? a['Winner'] : a['User']) as Map<String, dynamic>?;
+        final target = u != null ? '@${u['login'] ?? 'unknown'}' : '@unknown';
 
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: _FinishedCard(
-              title: a['title'] as String? ?? 'Лот',
-              imageUrl: a['url_item'] as String? ?? '',
-              roleLabel: isOwner ? 'Вы продавец' : 'Вы покупатель',
-              counterparty: target,
-              onRate: (ownerId == null || winnerId == null || alreadyRated)
-                  ? null
-                  : () => _openRate(a),
-              rateDone: alreadyRated,
-            ),
-          );
-        },
-        childCount: _finished.length,
-      ),
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          child: _FinishedCard(
+            title: a['title'] as String? ?? 'Лот',
+            imageUrl: a['url_item'] as String? ?? '',
+            roleLabel: isOwner ? 'Вы продавец' : 'Вы покупатель',
+            counterparty: target,
+            onRate: (ownerId == null || winnerId == null || alreadyRated)
+                ? null
+                : () => _openRate(a),
+            rateDone: alreadyRated,
+          ),
+        );
+      }, childCount: _finished.length),
     );
   }
 }
@@ -734,22 +780,21 @@ class _FinishedCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text('$roleLabel · контрагент $counterparty',
-                    style:
-                        const TextStyle(color: Colors.grey, fontSize: 12)),
+                Text(
+                  '$roleLabel · контрагент $counterparty',
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     onPressed: onRate,
                     icon: Icon(
-                      rateDone
-                          ? Icons.check_circle
-                          : Icons.star_border_rounded,
+                      rateDone ? Icons.check_circle : Icons.star_border_rounded,
                     ),
-                    label: Text(rateDone
-                        ? 'Оценка отправлена'
-                        : 'Оценить контрагента'),
+                    label: Text(
+                      rateDone ? 'Оценка отправлена' : 'Оценить контрагента',
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: rateDone
                           ? Colors.white12

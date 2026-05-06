@@ -1,13 +1,29 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../user_table/user_table.dart';
 
 class ProfileService {
   final _client = Supabase.instance.client;
+  final _userTable = UserTable();
   static const List<String> _userTables = ['User', 'users', 'user', '"User"'];
 
   // ? Описание
   Future<Map<String, dynamic>> getProfileData(String userId) async {
-    final user = await _selectUserById(userId);
+    final current = _client.auth.currentUser;
+    if (current != null && current.id == userId) {
+      await _userTable.ensureProfile(
+        userId: current.id,
+        username:
+            (current.userMetadata?['username'] as String?)?.trim().isNotEmpty ==
+                true
+            ? current.userMetadata!['username'] as String
+            : (current.email?.split('@').first ?? 'user'),
+        email: current.email ?? '',
+      );
+    }
+
+    final user =
+        await _selectUserById(userId) ?? _fallbackFromAuthCurrent(userId);
 
     if (user == null) {
       throw Exception('Профиль не найден в базе данных');
@@ -50,6 +66,27 @@ class ProfileService {
       }
     }
     return null;
+  }
+
+  Map<String, dynamic>? _fallbackFromAuthCurrent(String userId) {
+    final current = _client.auth.currentUser;
+    if (current == null || current.id != userId) return null;
+    final meta = current.userMetadata ?? const {};
+    final username = (meta['username'] as String?)?.trim();
+    final avatar = (meta['avatar'] as String?)?.trim();
+    return {
+      'id': current.id,
+      'email': current.email ?? '',
+      'login':
+          (meta['login'] as String?)?.trim() ??
+          (current.email?.split('@').first ?? 'user'),
+      'username': (username == null || username.isEmpty)
+          ? (current.email?.split('@').first ?? 'Пользователь')
+          : username,
+      'scope': 0,
+      'avatar': (avatar == null || avatar.isEmpty) ? null : avatar,
+      'created_at': current.createdAt,
+    };
   }
 
   /// Таблица [Notification] в схеме; при отличии регистра в PostgREST пробуем [notification].

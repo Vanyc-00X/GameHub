@@ -38,10 +38,9 @@ class AuthServices {
   }) async {
     try {
       final safeEmail = email.trim();
-      final safeUsername =
-          (username == null || username.trim().isEmpty)
-              ? safeEmail.split('@').first
-              : username.trim();
+      final safeUsername = (username == null || username.trim().isEmpty)
+          ? safeEmail.split('@').first
+          : username.trim();
 
       final response = await _client.auth.signUp(
         email: safeEmail,
@@ -73,13 +72,21 @@ class AuthServices {
   Future<void> ensureProfile() async {
     final user = _client.auth.currentUser;
     if (user == null) return;
+    DateTime? dob;
+    final rawDob = user.userMetadata?['date_of_birth'];
+    if (rawDob != null) {
+      try {
+        dob = DateTime.parse(rawDob.toString());
+      } catch (_) {}
+    }
     await _userTable.ensureProfile(
       userId: user.id,
-      username: (user.userMetadata?['username'] as String?)?.trim().isNotEmpty ==
-              true
+      username:
+          (user.userMetadata?['username'] as String?)?.trim().isNotEmpty == true
           ? user.userMetadata!['username'] as String
           : (user.email?.split('@').first ?? 'user'),
       email: user.email ?? '',
+      dateOfBirth: dob,
     );
   }
 

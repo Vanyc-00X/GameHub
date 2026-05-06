@@ -26,6 +26,7 @@ class UserTable {
     required String email,
     String? fullName,
     String? avatar,
+    DateTime? dateOfBirth,
   }) async {
     try {
       final table = await _table();
@@ -34,9 +35,12 @@ class UserTable {
         'username': username,
         'email': email,
         'login': username.toLowerCase(),
-        'password': '',
         'avatar': avatar ?? '',
         'scope': 0,
+        'date_of_birth': _toDateForDb(
+          dateOfBirth ??
+              DateTime.now().subtract(const Duration(days: 365 * 18)),
+        ),
       });
     } catch (e) {
       debugPrint('Ошибка при создании профиля пользователя: $e');
@@ -51,6 +55,7 @@ class UserTable {
     required String username,
     required String email,
     String? avatar,
+    DateTime? dateOfBirth,
   }) async {
     try {
       final table = await _table();
@@ -67,19 +72,24 @@ class UserTable {
         'username': username,
         'email': email,
         'login': login,
-        'password': '',
         'avatar': avatar ?? '',
         'scope': 0,
+        'date_of_birth': _toDateForDb(
+          dateOfBirth ??
+              DateTime.now().subtract(const Duration(days: 365 * 18)),
+        ),
       });
     } catch (e) {
       debugPrint('ensureProfile: $e');
     }
   }
 
+  String _toDateForDb(DateTime v) {
+    return DateTime(v.year, v.month, v.day).toIso8601String();
+  }
+
   Future<String> _uniqueLogin(String base) async {
-    final cleaned = base
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9_.]+'), '_');
+    final cleaned = base.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.]+'), '_');
     final start = cleaned.isEmpty ? 'user' : cleaned;
     var candidate = start;
     var suffix = 1;
