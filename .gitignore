@@ -33,6 +33,15 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Local secrets
+.env
+.env.*
+**/.env
+**/.env.*
+.fcm-secret.env
+**/firebase-adminsdk*.json
+gamehub-*-firebase-adminsdk-*.json
+
 # Symbolication related
 app.*.symbols
 
@@ -40,6 +49,10 @@ app.*.symbols
 app.*.map.json
 
 # Android Studio will place build artifacts here
+/android/build/
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Supabase CLI local state
+/supabase/.temp/

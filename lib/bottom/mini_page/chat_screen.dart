@@ -14,6 +14,7 @@ import 'package:uuid/uuid.dart';
 import '../../database/message_content_codec.dart';
 import '../../database/services/chat_service.dart';
 import '../../database/services/media_service.dart';
+import '../../database/services/notification_preferences_service.dart';
 import '../../widgets/attachment_tile.dart';
 import '../../widgets/voice_player.dart';
 
@@ -44,12 +45,46 @@ class _ChatScreenState extends State<ChatScreen> {
   Duration _recordDuration = Duration.zero;
 
   bool _sending = false;
+  bool _muted = false;
 
   Future<void> _sendText() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
     _messageController.clear();
     await _sendEncoded(MessageContentData(text: text));
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMuteState();
+  }
+
+  Future<void> _loadMuteState() async {
+    final muted = await NotificationPreferencesService.instance.isChatMuted(
+      widget.chatId,
+    );
+    if (!mounted) return;
+    setState(() => _muted = muted);
+  }
+
+  Future<void> _toggleMute() async {
+    final next = !_muted;
+    setState(() => _muted = next);
+    await NotificationPreferencesService.instance.setChatMuted(
+      widget.chatId,
+      next,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          next
+              ? 'Уведомления этого чата отключены'
+              : 'Уведомления этого чата включены',
+        ),
+      ),
+    );
   }
 
   Future<void> _sendEncoded(MessageContentData data) async {
@@ -63,9 +98,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollToBottom();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка отправки: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Ошибка отправки: $e')));
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -105,9 +140,9 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _recording = true);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Запись: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Запись: $e')));
       }
     }
   }
@@ -160,10 +195,12 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    await _sendEncoded(MessageContentData(
-      audioUrl: uploaded.url,
-      audioDurationMs: duration.inMilliseconds,
-    ));
+    await _sendEncoded(
+      MessageContentData(
+        audioUrl: uploaded.url,
+        audioDurationMs: duration.inMilliseconds,
+      ),
+    );
   }
 
   Future<void> _pickAttachment() async {
@@ -189,23 +226,25 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         return;
       }
-      await _sendEncoded(MessageContentData(
-        text: _messageController.text.trim(),
-        attachments: [
-          AttachmentMeta(
-            url: uploaded.url,
-            name: uploaded.name,
-            sizeBytes: uploaded.sizeBytes,
-            mime: uploaded.mime,
-          ),
-        ],
-      ));
+      await _sendEncoded(
+        MessageContentData(
+          text: _messageController.text.trim(),
+          attachments: [
+            AttachmentMeta(
+              url: uploaded.url,
+              name: uploaded.name,
+              sizeBytes: uploaded.sizeBytes,
+              mime: uploaded.mime,
+            ),
+          ],
+        ),
+      );
       _messageController.clear();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Файл: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Файл: $e')));
       }
     }
   }
@@ -246,6 +285,17 @@ class _ChatScreenState extends State<ChatScreen> {
         title: Text(widget.chatName),
         backgroundColor: const Color(0xFF0F0F1A),
         elevation: 0,
+        actions: [
+          IconButton(
+            tooltip: _muted ? 'Включить уведомления' : 'Заглушить чат',
+            onPressed: _toggleMute,
+            icon: Icon(
+              _muted
+                  ? Icons.notifications_off_outlined
+                  : Icons.notifications_active_outlined,
+            ),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -284,17 +334,15 @@ class _ChatScreenState extends State<ChatScreen> {
                   itemBuilder: (context, index) {
                     final msg = messages[index];
                     final isMe = msg['sender_id'] == currentUserId;
-                    final data = decodeMessageContent(msg['content']?.toString());
+                    final data = decodeMessageContent(
+                      msg['content']?.toString(),
+                    );
                     final time = timeago.format(
                       DateTime.parse(msg['created_at'] as String),
                       locale: 'ru',
                     );
 
-                    return _MessageBubble(
-                      isMe: isMe,
-                      data: data,
-                      time: time,
-                    );
+                    return _MessageBubble(isMe: isMe, data: data, time: time);
                   },
                 );
               },
@@ -427,49 +475,60 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bubbleColor =
-        isMe ? const Color(0xFF7C3AED) : Colors.white.withValues(alpha: 0.08);
+    final bubbleColor = isMe
+        ? const Color(0xFF7C3AED)
+        : Colors.white.withValues(alpha: 0.08);
     final textColor = isMe ? Colors.white : Colors.white70;
 
     final items = <Widget>[];
 
     if (data.hasText) {
-      items.add(Text(
-        data.text,
-        style: TextStyle(color: textColor, fontSize: 16),
-      ));
+      items.add(
+        Text(data.text, style: TextStyle(color: textColor, fontSize: 16)),
+      );
     }
 
     if (data.hasImages) {
       for (final u in data.imageUrls) {
         if (items.isNotEmpty) items.add(const SizedBox(height: 6));
-        items.add(ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Image.network(u,
+        items.add(
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.network(
+              u,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink()),
-        ));
+              errorBuilder: (context, error, stackTrace) =>
+                  const SizedBox.shrink(),
+            ),
+          ),
+        );
       }
     }
 
     if (data.hasVoice) {
       if (items.isNotEmpty) items.add(const SizedBox(height: 6));
-      items.add(VoicePlayer(
-        url: data.audioUrl!,
-        durationMs: data.audioDurationMs,
-        background:
-            isMe ? Colors.white.withValues(alpha: 0.18) : const Color(0xFF0F0F1A),
-      ));
+      items.add(
+        VoicePlayer(
+          url: data.audioUrl!,
+          durationMs: data.audioDurationMs,
+          background: isMe
+              ? Colors.white.withValues(alpha: 0.18)
+              : const Color(0xFF0F0F1A),
+        ),
+      );
     }
 
     if (data.hasAttachments) {
       for (final a in data.attachments) {
         if (items.isNotEmpty) items.add(const SizedBox(height: 6));
-        items.add(AttachmentTile(
-          meta: a,
-          background:
-              isMe ? Colors.white.withValues(alpha: 0.18) : const Color(0xFF0F0F1A),
-        ));
+        items.add(
+          AttachmentTile(
+            meta: a,
+            background: isMe
+                ? Colors.white.withValues(alpha: 0.18)
+                : const Color(0xFF0F0F1A),
+          ),
+        );
       }
     }
 
@@ -478,13 +537,15 @@ class _MessageBubble extends StatelessWidget {
     }
 
     items.add(const SizedBox(height: 4));
-    items.add(Text(
-      time,
-      style: TextStyle(
-        fontSize: 11,
-        color: isMe ? Colors.white70 : Colors.grey,
+    items.add(
+      Text(
+        time,
+        style: TextStyle(
+          fontSize: 11,
+          color: isMe ? Colors.white70 : Colors.grey,
+        ),
       ),
-    ));
+    );
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,

@@ -1,0 +1,4 @@
+project_id = "tvjggbkxmgbdtcfxggza"
+
+[functions.send-message-push]
+verify_jwt = false

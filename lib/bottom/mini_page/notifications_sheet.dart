@@ -93,12 +93,12 @@ class _NotificationsSheetState extends State<NotificationsSheet> {
                   onRefresh: () => NotificationService.instance.refresh(),
                   child: ListView.separated(
                     itemCount: items.length,
-                    separatorBuilder: (_, __) =>
+                    separatorBuilder: (context, index) =>
                         const Divider(color: Colors.white12, height: 1),
                     itemBuilder: (context, index) {
                       final n = items[index];
-                      final isRead = n['read_at'] != null ||
-                          n['is_watched'] == true;
+                      final isRead =
+                          n['read_at'] != null || n['is_watched'] == true;
                       final view = _describe(n);
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -106,8 +106,7 @@ class _NotificationsSheetState extends State<NotificationsSheet> {
                           backgroundColor: isRead
                               ? Colors.grey.withValues(alpha: 0.3)
                               : view.color,
-                          child: Icon(view.icon,
-                              size: 18, color: Colors.white),
+                          child: Icon(view.icon, size: 18, color: Colors.white),
                         ),
                         title: Text(
                           view.title,
@@ -195,6 +194,27 @@ class _NotificationsSheetState extends State<NotificationsSheet> {
           color: const Color(0xFFF59E0B),
           title: 'Новая оценка',
           subtitle: stars != null ? 'Вам поставили $stars ⭐' : '',
+        );
+      case 'post_liked':
+        return _NotifView(
+          icon: Icons.favorite,
+          color: const Color(0xFFEC4899),
+          title: 'Ваш пост понравился',
+          subtitle: 'Кто-то поставил лайк вашему посту',
+        );
+      case 'post_commented':
+        return _NotifView(
+          icon: Icons.mode_comment_outlined,
+          color: const Color(0xFF7C3AED),
+          title: 'Новый комментарий',
+          subtitle: (data['preview'] as String?) ?? '',
+        );
+      case 'post_quoted':
+        return _NotifView(
+          icon: Icons.format_quote,
+          color: const Color(0xFF34D399),
+          title: 'Ваш пост процитировали',
+          subtitle: (data['preview'] as String?) ?? '',
         );
       default:
         return _NotifView(

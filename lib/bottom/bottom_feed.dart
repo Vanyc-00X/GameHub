@@ -228,6 +228,7 @@ class _BottomFeedState extends State<BottomFeed> {
             created_at,
             content,
             like,
+            user_id,
             user:User!user_id (username, avatar, login),
             likes:PostLike!post_id (count),
             comments:Comment!post_id (count)
@@ -306,6 +307,10 @@ class _BottomFeedState extends State<BottomFeed> {
           'post_id': postId,
         });
         _likedPostIds.add(postId);
+        await _notifyPostOwner(postId, 'post_liked', {
+          'post_id': postId,
+          'sender_id': user.id,
+        });
       }
       await _syncLikeCount(postId);
       await _fetchPosts();
@@ -327,6 +332,11 @@ class _BottomFeedState extends State<BottomFeed> {
         'user_id': user.id,
         'post_id': postId,
         'content': text.trim(),
+      });
+      await _notifyPostOwner(postId, 'post_commented', {
+        'post_id': postId,
+        'sender_id': user.id,
+        'preview': text.trim(),
       });
       await _fetchPosts();
     } catch (e) {
@@ -560,6 +570,14 @@ class _BottomFeedState extends State<BottomFeed> {
         await TagService.instance.upsertPostTags(postId: postId, names: tags);
         await _loadPopularTags();
       }
+      if (qid != null) {
+        await _notifyPostOwner(qid, 'post_quoted', {
+          'post_id': qid,
+          'quote_post_id': postId,
+          'sender_id': user.id,
+          'preview': base,
+        });
+      }
 
       _postController.clear();
       setState(() {
@@ -582,6 +600,25 @@ class _BottomFeedState extends State<BottomFeed> {
           context,
         ).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
       }
+    }
+  }
+
+  Future<void> _notifyPostOwner(
+    int postId,
+    String type,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      await supabase.rpc(
+        'create_feed_notification',
+        params: {
+          'target_post_id': postId,
+          'notification_type': type,
+          'notification_payload': payload,
+        },
+      );
+    } catch (e) {
+      debugPrint('Feed notification skipped: $e');
     }
   }
 

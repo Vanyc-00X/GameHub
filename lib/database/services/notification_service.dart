@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'notification_preferences_service.dart';
+
 final SupabaseClient _sb = Supabase.instance.client;
 
 /// In-app уведомления через Supabase Realtime.
@@ -30,8 +32,7 @@ class NotificationService {
     return _unread.stream;
   }
 
-  int get currentUnread =>
-      _cache.where((n) => n['read_at'] == null).length;
+  int get currentUnread => _cache.where((n) => n['read_at'] == null).length;
 
   Stream<List<Map<String, dynamic>>> _withReplay() {
     return Stream<List<Map<String, dynamic>>>.multi((controller) {
@@ -77,8 +78,11 @@ class NotificationService {
           ),
           callback: (payload) {
             final row = Map<String, dynamic>.from(payload.newRecord);
-            final next = [row, ..._cache];
-            _emit(next);
+            _shouldShow(row).then((show) {
+              if (!show) return;
+              final next = [row, ..._cache];
+              _emit(next);
+            });
           },
         )
         .onPostgresChanges(
@@ -94,14 +98,15 @@ class NotificationService {
             final row = Map<String, dynamic>.from(payload.newRecord);
             final id = row['id'];
             final next = _cache
-                .map((n) =>
-                    n['id'].toString() == id.toString() ? row : n)
+                .map((n) => n['id'].toString() == id.toString() ? row : n)
                 .toList();
             _emit(next);
           },
         )
         .subscribe((status, [err]) {
-          debugPrint('NotificationService channel=$channelName status=$status err=$err');
+          debugPrint(
+            'NotificationService channel=$channelName status=$status err=$err',
+          );
         });
   }
 
@@ -114,7 +119,11 @@ class NotificationService {
         .eq('user_id', uid)
         .order('created_at', ascending: false)
         .limit(100);
-    _emit(List<Map<String, dynamic>>.from(rows));
+    final visible = <Map<String, dynamic>>[];
+    for (final row in List<Map<String, dynamic>>.from(rows)) {
+      if (await _shouldShow(row)) visible.add(row);
+    }
+    _emit(visible);
   }
 
   Future<void> refresh() async {
@@ -149,6 +158,88 @@ class NotificationService {
     } catch (e) {
       debugPrint('NotificationService markAllRead error: $e');
     }
+  }
+
+  Future<void> createForUser({
+    required String userId,
+    required String type,
+    required NotificationTopic topic,
+    Map<String, dynamic> payload = const {},
+    int? chatId,
+  }) async {
+    final currentUserId = _sb.auth.currentUser?.id;
+    if (currentUserId == null || currentUserId == userId) return;
+
+    final prefs = NotificationPreferencesService.instance;
+    final topicEnabled = await prefs.isTopicEnabled(topic, userId);
+    if (!topicEnabled) return;
+    if (chatId != null && await prefs.isChatMuted(chatId, userId: userId)) {
+      return;
+    }
+
+    try {
+      await _sb.from('Notification').insert({
+        'user_id': userId,
+        'type': type,
+        'payload': payload,
+      });
+    } catch (e) {
+      debugPrint('NotificationService createForUser error: $e');
+    }
+  }
+
+  Future<void> createForUsers({
+    required Iterable<String> userIds,
+    required String type,
+    required NotificationTopic topic,
+    Map<String, dynamic> payload = const {},
+    int? chatId,
+  }) async {
+    for (final userId in userIds.toSet()) {
+      await createForUser(
+        userId: userId,
+        type: type,
+        topic: topic,
+        payload: payload,
+        chatId: chatId,
+      );
+    }
+  }
+
+  Future<bool> _shouldShow(Map<String, dynamic> notification) async {
+    final uid = _sb.auth.currentUser?.id;
+    if (uid == null) return false;
+
+    final type = notification['type']?.toString() ?? '';
+    final payload = notification['payload'];
+    final data = payload is Map ? Map<String, dynamic>.from(payload) : const {};
+    final topic = _topicForType(type);
+    final prefs = NotificationPreferencesService.instance;
+
+    if (!await prefs.isTopicEnabled(topic, uid)) return false;
+
+    final chatId = int.tryParse('${data['chat_id'] ?? ''}');
+    if (topic == NotificationTopic.chats &&
+        chatId != null &&
+        await prefs.isChatMuted(chatId)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  NotificationTopic _topicForType(String type) {
+    return switch (type) {
+      'new_message' => NotificationTopic.chats,
+      'new_bid' ||
+      'auction_won' ||
+      'auction_ended' ||
+      'new_rating' => NotificationTopic.auctions,
+      'post_liked' ||
+      'post_commented' ||
+      'post_quoted' => NotificationTopic.feed,
+      _ => NotificationTopic.feed,
+    };
   }
 
   void _emit(List<Map<String, dynamic>> list) {
