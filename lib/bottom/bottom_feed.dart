@@ -14,13 +14,10 @@ import 'package:uuid/uuid.dart';
 
 import '../database/post_content_codec.dart';
 import '../database/services/draft_service.dart';
-import '../database/services/favorite_service.dart';
 import '../database/services/media_service.dart';
-import '../database/services/report_service.dart';
 import '../database/services/tag_service.dart';
 import '../widgets/attachment_tile.dart';
 import '../widgets/voice_player.dart';
-import 'mini_page/report_sheet.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -35,7 +32,6 @@ class BottomFeed extends StatefulWidget {
 class _BottomFeedState extends State<BottomFeed> {
   List<Map<String, dynamic>> _posts = [];
   Set<int> _likedPostIds = {};
-  Set<int> _favoritePostIds = {};
   PostDraft? _savedDraft;
   bool _isLoading = true;
   final _postController = TextEditingController();
@@ -44,6 +40,7 @@ class _BottomFeedState extends State<BottomFeed> {
   final List<AttachmentMeta> _draftAttachments = [];
   String? _draftAudioUrl;
   int? _draftAudioMs;
+  Map<String, dynamic>? _currentUserProfile;
   Map<String, dynamic>? _quoteFrom;
 
   // Голосовая запись поста
@@ -72,8 +69,8 @@ class _BottomFeedState extends State<BottomFeed> {
     _postController.addListener(_scheduleDraftSave);
     _fetchPosts();
     _loadPopularTags();
-    _loadFavorites();
     _loadDraft();
+    _loadCurrentUserProfile();
     _subscribeToChanges();
   }
 
@@ -95,18 +92,29 @@ class _BottomFeedState extends State<BottomFeed> {
     );
   }
 
-  Future<void> _loadFavorites() async {
-    final ids = await FavoriteService.instance.listIds(FavoriteKind.post);
-    if (!mounted) return;
-    setState(() => _favoritePostIds = ids);
-  }
-
   Future<void> _loadDraft() async {
     final d = await DraftService.instance.load();
     if (!mounted) return;
     if (d == null || d.isEmpty) return;
     if (_postController.text.isNotEmpty || _draftImages.isNotEmpty) return;
     setState(() => _savedDraft = d);
+  }
+
+  Future<void> _loadCurrentUserProfile() async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) return;
+
+    try {
+      final row = await supabase
+          .from('User')
+          .select('username, login, avatar')
+          .eq('id', userId)
+          .maybeSingle();
+      if (!mounted || row == null) return;
+      setState(() => _currentUserProfile = Map<String, dynamic>.from(row));
+    } catch (e) {
+      debugPrint('Не удалось загрузить профиль для composer: $e');
+    }
   }
 
   Future<void> _restoreDraft() async {
@@ -127,19 +135,6 @@ class _BottomFeedState extends State<BottomFeed> {
     await DraftService.instance.clear();
     if (!mounted) return;
     setState(() => _savedDraft = null);
-  }
-
-  Future<void> _toggleFavorite(int postId) async {
-    final now =
-        await FavoriteService.instance.toggle(kind: FavoriteKind.post, refId: postId);
-    if (!mounted) return;
-    setState(() {
-      if (now) {
-        _favoritePostIds.add(postId);
-      } else {
-        _favoritePostIds.remove(postId);
-      }
-    });
   }
 
   Future<void> _loadPopularTags() async {
@@ -168,7 +163,8 @@ class _BottomFeedState extends State<BottomFeed> {
     Iterable<Map<String, dynamic>> list = _posts;
     if (_tagFilterPostIds != null) {
       list = list.where(
-          (post) => _tagFilterPostIds!.contains((post['id'] as num).toInt()));
+        (post) => _tagFilterPostIds!.contains((post['id'] as num).toInt()),
+      );
     }
     final q = _feedSearchController.text.trim().toLowerCase();
     if (q.isEmpty) return list.toList();
@@ -178,9 +174,13 @@ class _BottomFeedState extends State<BottomFeed> {
       final ln = (user['login'] as String? ?? '').toLowerCase();
       final raw = post['content'] as String? ?? '';
       final d = decodePostContent(raw);
-      final searchBlob = [d.text, raw, un, '@$ln', d.tags.join(' ')]
-          .join(' ')
-          .toLowerCase();
+      final searchBlob = [
+        d.text,
+        raw,
+        un,
+        '@$ln',
+        d.tags.join(' '),
+      ].join(' ').toLowerCase();
       return searchBlob.contains(q);
     }).toList();
   }
@@ -244,9 +244,9 @@ class _BottomFeedState extends State<BottomFeed> {
     } catch (e) {
       debugPrint('Ошибка загрузки постов: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Лента: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Лента: $e')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -311,9 +311,9 @@ class _BottomFeedState extends State<BottomFeed> {
       await _fetchPosts();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка лайка: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Ошибка лайка: $e')));
       }
     }
   }
@@ -331,16 +331,19 @@ class _BottomFeedState extends State<BottomFeed> {
       await _fetchPosts();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Комментарий: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Комментарий: $e')));
       }
     }
   }
 
   Future<void> _pickImage() async {
     final picker = ImagePicker();
-    final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    final x = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+    );
     if (x == null) return;
     try {
       final uploaded = await MediaService.instance.uploadPostMedia(
@@ -351,7 +354,9 @@ class _BottomFeedState extends State<BottomFeed> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Не удалось загрузить фото: проверьте storage бакеты'),
+            content: Text(
+              'Не удалось загрузить фото: проверьте storage бакеты',
+            ),
           ),
         );
         return;
@@ -361,9 +366,9 @@ class _BottomFeedState extends State<BottomFeed> {
       _scheduleDraftSave();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Загрузка фото: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Загрузка фото: $e')));
       }
     }
   }
@@ -378,8 +383,9 @@ class _BottomFeedState extends State<BottomFeed> {
       final file = res.files.first;
       if (file.path == null) return;
 
-      final uploaded = await MediaService.instance
-          .uploadPostMedia(file: File(file.path!));
+      final uploaded = await MediaService.instance.uploadPostMedia(
+        file: File(file.path!),
+      );
       if (uploaded == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -389,18 +395,20 @@ class _BottomFeedState extends State<BottomFeed> {
         return;
       }
       setState(() {
-        _draftAttachments.add(AttachmentMeta(
-          url: uploaded.url,
-          name: uploaded.name,
-          sizeBytes: uploaded.sizeBytes,
-          mime: uploaded.mime,
-        ));
+        _draftAttachments.add(
+          AttachmentMeta(
+            url: uploaded.url,
+            name: uploaded.name,
+            sizeBytes: uploaded.sizeBytes,
+            mime: uploaded.mime,
+          ),
+        );
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Файл: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Файл: $e')));
       }
     }
   }
@@ -436,9 +444,9 @@ class _BottomFeedState extends State<BottomFeed> {
       setState(() => _recording = true);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Запись: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Запись: $e')));
       }
     }
   }
@@ -497,7 +505,8 @@ class _BottomFeedState extends State<BottomFeed> {
 
   Future<void> _publishPost() async {
     final base = _postController.text.trim();
-    final hasContent = base.isNotEmpty ||
+    final hasContent =
+        base.isNotEmpty ||
         _draftImages.isNotEmpty ||
         _draftAttachments.isNotEmpty ||
         _draftAudioUrl != null ||
@@ -506,9 +515,9 @@ class _BottomFeedState extends State<BottomFeed> {
 
     final user = supabase.auth.currentUser;
     if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Войдите в аккаунт')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Войдите в аккаунт')));
       return;
     }
 
@@ -563,15 +572,15 @@ class _BottomFeedState extends State<BottomFeed> {
       await DraftService.instance.clear();
       await _fetchPosts();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Пост опубликован')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Пост опубликован')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
       }
     }
   }
@@ -626,7 +635,9 @@ class _BottomFeedState extends State<BottomFeed> {
                       future: load(),
                       builder: (context, snapshot) {
                         if (!snapshot.hasData) {
-                          return const Center(child: CircularProgressIndicator());
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
                         }
                         final comments = snapshot.data!;
                         return ListView.builder(
@@ -698,7 +709,10 @@ class _BottomFeedState extends State<BottomFeed> {
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.send, color: Color(0xFF7C3AED)),
+                          icon: const Icon(
+                            Icons.send,
+                            color: Color(0xFF7C3AED),
+                          ),
                           onPressed: () async {
                             await _addComment(postId, controller.text);
                             controller.clear();
@@ -777,11 +791,22 @@ class _BottomFeedState extends State<BottomFeed> {
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
                       hintText: 'Поиск: текст, #тег, @логин, имя...',
-                      hintStyle: const TextStyle(color: Colors.grey, fontSize: 14),
-                      prefixIcon: const Icon(Icons.search, color: Colors.grey, size: 22),
+                      hintStyle: const TextStyle(
+                        color: Colors.grey,
+                        fontSize: 14,
+                      ),
+                      prefixIcon: const Icon(
+                        Icons.search,
+                        color: Colors.grey,
+                        size: 22,
+                      ),
                       suffixIcon: _feedSearchController.text.isNotEmpty
                           ? IconButton(
-                              icon: const Icon(Icons.close, color: Colors.grey, size: 20),
+                              icon: const Icon(
+                                Icons.close,
+                                color: Colors.grey,
+                                size: 20,
+                              ),
                               onPressed: () {
                                 _feedSearchController.clear();
                                 setState(() {});
@@ -801,7 +826,7 @@ class _BottomFeedState extends State<BottomFeed> {
                   const SizedBox(height: 12),
                   if (_quoteFrom != null) _quoteChip(),
                   if (_savedDraft != null) _draftBanner(),
-                  _composer(me),
+                  _composer(me, _currentUserProfile),
                 ],
               ),
             ),
@@ -821,7 +846,10 @@ class _BottomFeedState extends State<BottomFeed> {
               child: Padding(
                 padding: EdgeInsets.all(40),
                 child: Center(
-                  child: Text('Пока нет постов', style: TextStyle(color: Colors.grey)),
+                  child: Text(
+                    'Пока нет постов',
+                    style: TextStyle(color: Colors.grey),
+                  ),
                 ),
               ),
             )
@@ -842,71 +870,72 @@ class _BottomFeedState extends State<BottomFeed> {
             )
           else
             SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final post = visible[index];
-                  final postId = (post['id'] as num).toInt();
-                  final userData = post['user'] as Map<String, dynamic>? ?? {};
-                  final username = userData['username'] as String? ?? 'Пользователь';
-                  final login = userData['login'] as String? ?? '';
-                  final time = timeago.format(
-                    DateTime.parse(post['created_at'] as String),
-                    locale: 'ru',
-                  );
-                  final rawContent = post['content'] as String? ?? '';
-                  final parsed = decodePostContent(rawContent);
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final post = visible[index];
+                final postId = (post['id'] as num).toInt();
+                final userData = post['user'] as Map<String, dynamic>? ?? {};
+                final username =
+                    userData['username'] as String? ?? 'Пользователь';
+                final login = userData['login'] as String? ?? '';
+                final avatarUrl = userData['avatar'] as String?;
+                final time = timeago.format(
+                  DateTime.parse(post['created_at'] as String),
+                  locale: 'ru',
+                );
+                final rawContent = post['content'] as String? ?? '';
+                final parsed = decodePostContent(rawContent);
 
-                  final likesCount = (() {
-                    final likes = post['likes'];
-                    if (likes is List && likes.isNotEmpty) {
-                      return (likes[0]['count'] as int?) ?? 0;
+                final likesCount = (() {
+                  final likes = post['likes'];
+                  if (likes is List && likes.isNotEmpty) {
+                    return (likes[0]['count'] as int?) ?? 0;
+                  }
+                  return 0;
+                })();
+
+                final commentsCount = (() {
+                  final c = post['comments'];
+                  if (c is List && c.isNotEmpty) {
+                    return (c[0]['count'] as int?) ?? 0;
+                  }
+                  return 0;
+                })();
+
+                return _PostCardX(
+                  postId: postId,
+                  username: username,
+                  login: login,
+                  avatarUrl: avatarUrl,
+                  time: time,
+                  parsed: parsed,
+                  rawFallback: rawContent,
+                  likes: likesCount,
+                  comments: commentsCount,
+                  liked: _likedPostIds.contains(postId),
+                  onLike: () => _toggleLike(postId),
+                  onComment: () {
+                    _showComments(postId);
+                  },
+                  onQuote: () {
+                    if (parsed.hasQuote) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Нельзя цитировать цитату'),
+                        ),
+                      );
+                      return;
                     }
-                    return 0;
-                  })();
-
-                  final commentsCount = (() {
-                    final c = post['comments'];
-                    if (c is List && c.isNotEmpty) {
-                      return (c[0]['count'] as int?) ?? 0;
-                    }
-                    return 0;
-                  })();
-
-                  return _PostCardX(
-                    postId: postId,
-                    username: username,
-                    login: login,
-                    time: time,
-                    parsed: parsed,
-                    rawFallback: rawContent,
-                    likes: likesCount,
-                    comments: commentsCount,
-                    liked: _likedPostIds.contains(postId),
-                    bookmarked: _favoritePostIds.contains(postId),
-                    onLike: () => _toggleLike(postId),
-                    onComment: () {
-                      _showComments(postId);
-                    },
-                    onQuote: () {
-                      setState(() {
-                        _quoteFrom = {
-                          'id': postId,
-                          'content': rawContent,
-                          'user': userData,
-                        };
-                      });
-                    },
-                    onTag: (t) => _applyTagFilter(t),
-                    onBookmark: () => _toggleFavorite(postId),
-                    onReport: () => showReportSheet(
-                      context,
-                      kind: ReportTargetKind.post,
-                      targetId: postId.toString(),
-                    ),
-                  );
-                },
-                childCount: visible.length,
-              ),
+                    setState(() {
+                      _quoteFrom = {
+                        'id': postId,
+                        'content': rawContent,
+                        'user': userData,
+                      };
+                    });
+                  },
+                  onTag: (t) => _applyTagFilter(t),
+                );
+              }, childCount: visible.length),
             ),
           const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
@@ -915,7 +944,9 @@ class _BottomFeedState extends State<BottomFeed> {
   }
 
   Widget _tagsRow() {
-    if (_popularTags.isEmpty && _activeTag == null) return const SizedBox.shrink();
+    if (_popularTags.isEmpty && _activeTag == null) {
+      return const SizedBox.shrink();
+    }
     return SizedBox(
       height: 36,
       child: ListView(
@@ -983,7 +1014,9 @@ class _BottomFeedState extends State<BottomFeed> {
       decoration: BoxDecoration(
         color: const Color(0xFF2D1B69).withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF7C3AED).withValues(alpha: 0.4)),
+        border: Border.all(
+          color: const Color(0xFF7C3AED).withValues(alpha: 0.4),
+        ),
       ),
       child: Row(
         children: [
@@ -1011,8 +1044,8 @@ class _BottomFeedState extends State<BottomFeed> {
     final preview = d.text.trim().isNotEmpty
         ? d.text.trim()
         : (d.imageUrls.isNotEmpty
-            ? '📷 ${d.imageUrls.length} фото'
-            : (d.audioUrl != null ? '🎤 голосовое' : 'черновик'));
+              ? '📷 ${d.imageUrls.length} фото'
+              : (d.audioUrl != null ? '🎤 голосовое' : 'черновик'));
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
@@ -1020,7 +1053,8 @@ class _BottomFeedState extends State<BottomFeed> {
         color: const Color(0xFF2D1B69).withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-            color: const Color(0xFF7C3AED).withValues(alpha: 0.4)),
+          color: const Color(0xFF7C3AED).withValues(alpha: 0.4),
+        ),
       ),
       child: Row(
         children: [
@@ -1033,9 +1067,10 @@ class _BottomFeedState extends State<BottomFeed> {
                 const Text(
                   'Есть черновик',
                   style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13),
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                 ),
                 Text(
                   preview,
@@ -1048,8 +1083,10 @@ class _BottomFeedState extends State<BottomFeed> {
           ),
           TextButton(
             onPressed: _restoreDraft,
-            child: const Text('Продолжить',
-                style: TextStyle(color: Color(0xFF7C3AED))),
+            child: const Text(
+              'Продолжить',
+              style: TextStyle(color: Color(0xFF7C3AED)),
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.close, color: Colors.grey, size: 20),
@@ -1060,7 +1097,18 @@ class _BottomFeedState extends State<BottomFeed> {
     );
   }
 
-  Widget _composer(User? me) {
+  Widget _composer(User? me, Map<String, dynamic>? profile) {
+    final avatarUrl = profile?['avatar'] as String?;
+    final username = profile?['username'] as String?;
+    final login = profile?['login'] as String?;
+    final fallback = username?.isNotEmpty == true
+        ? username![0].toUpperCase()
+        : (login?.isNotEmpty == true
+              ? login![0].toUpperCase()
+              : (me?.email?.isNotEmpty == true
+                    ? me!.email![0].toUpperCase()
+                    : '?'));
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1076,12 +1124,15 @@ class _BottomFeedState extends State<BottomFeed> {
               CircleAvatar(
                 backgroundColor: const Color(0xFF7C3AED),
                 radius: 20,
-                child: Text(
-                  me?.email?.isNotEmpty == true
-                      ? me!.email![0].toUpperCase()
-                      : '?',
-                  style: const TextStyle(color: Colors.white),
-                ),
+                backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
+                    ? NetworkImage(avatarUrl)
+                    : null,
+                child: avatarUrl == null || avatarUrl.isEmpty
+                    ? Text(
+                        fallback,
+                        style: const TextStyle(color: Colors.white),
+                      )
+                    : null,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -1123,8 +1174,11 @@ class _BottomFeedState extends State<BottomFeed> {
                           top: 0,
                           child: InkWell(
                             onTap: () => setState(() => _draftImages.remove(u)),
-                            child: const Icon(Icons.close,
-                                color: Colors.white, size: 18),
+                            child: const Icon(
+                              Icons.close,
+                              color: Colors.white,
+                              size: 18,
+                            ),
                           ),
                         ),
                       ],
@@ -1160,21 +1214,26 @@ class _BottomFeedState extends State<BottomFeed> {
               spacing: 8,
               runSpacing: 8,
               children: _draftAttachments
-                  .map((a) => Stack(
-                        children: [
-                          AttachmentTile(meta: a),
-                          Positioned(
-                            right: -4,
-                            top: -4,
-                            child: InkWell(
-                              onTap: () => setState(
-                                  () => _draftAttachments.remove(a)),
-                              child: const Icon(Icons.cancel,
-                                  color: Colors.white70, size: 18),
+                  .map(
+                    (a) => Stack(
+                      children: [
+                        AttachmentTile(meta: a),
+                        Positioned(
+                          right: -4,
+                          top: -4,
+                          child: InkWell(
+                            onTap: () =>
+                                setState(() => _draftAttachments.remove(a)),
+                            child: const Icon(
+                              Icons.cancel,
+                              color: Colors.white70,
+                              size: 18,
                             ),
                           ),
-                        ],
-                      ))
+                        ),
+                      ],
+                    ),
+                  )
                   .toList(),
             ),
           ],
@@ -1183,10 +1242,15 @@ class _BottomFeedState extends State<BottomFeed> {
               padding: const EdgeInsets.only(top: 12),
               child: Row(
                 children: [
-                  const Icon(Icons.fiber_manual_record, color: Colors.redAccent),
+                  const Icon(
+                    Icons.fiber_manual_record,
+                    color: Colors.redAccent,
+                  ),
                   const SizedBox(width: 8),
-                  Text('Запись ${_fmtDur(_recordDuration)}',
-                      style: const TextStyle(color: Colors.white70)),
+                  Text(
+                    'Запись ${_fmtDur(_recordDuration)}',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
                   const Spacer(),
                   IconButton(
                     onPressed: () => _stopRecording(discard: true),
@@ -1204,7 +1268,10 @@ class _BottomFeedState extends State<BottomFeed> {
             children: [
               IconButton(
                 onPressed: _pickImage,
-                icon: const Icon(Icons.image_outlined, color: Color(0xFF7C3AED)),
+                icon: const Icon(
+                  Icons.image_outlined,
+                  color: Color(0xFF7C3AED),
+                ),
                 tooltip: 'Фото',
               ),
               IconButton(
@@ -1243,7 +1310,9 @@ class _BottomFeedState extends State<BottomFeed> {
 String _previewText(String s) {
   if (s.startsWith('GHPOST:')) {
     final d = decodePostContent(s);
-    return d.text.isNotEmpty ? d.text : (s.length > 80 ? '${s.substring(0, 80)}…' : s);
+    return d.text.isNotEmpty
+        ? d.text
+        : (s.length > 80 ? '${s.substring(0, 80)}…' : s);
   }
   return s.length > 120 ? '${s.substring(0, 120)}…' : s;
 }
@@ -1252,37 +1321,33 @@ class _PostCardX extends StatelessWidget {
   final int postId;
   final String username;
   final String login;
+  final String? avatarUrl;
   final String time;
   final PostContentData parsed;
   final String rawFallback;
   final int likes;
   final int comments;
   final bool liked;
-  final bool bookmarked;
   final VoidCallback onLike;
   final VoidCallback onComment;
   final VoidCallback onQuote;
   final ValueChanged<String> onTag;
-  final VoidCallback onBookmark;
-  final VoidCallback onReport;
 
   const _PostCardX({
     required this.postId,
     required this.username,
     required this.login,
+    required this.avatarUrl,
     required this.time,
     required this.parsed,
     required this.rawFallback,
     required this.likes,
     required this.comments,
     required this.liked,
-    required this.bookmarked,
     required this.onLike,
     required this.onComment,
     required this.onQuote,
     required this.onTag,
-    required this.onBookmark,
-    required this.onReport,
   });
 
   @override
@@ -1302,10 +1367,15 @@ class _PostCardX extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const CircleAvatar(
+              CircleAvatar(
                 radius: 20,
-                backgroundColor: Color(0xFF7C3AED),
-                child: Icon(Icons.person, color: Colors.white, size: 22),
+                backgroundColor: const Color(0xFF7C3AED),
+                backgroundImage: avatarUrl != null && avatarUrl!.isNotEmpty
+                    ? NetworkImage(avatarUrl!)
+                    : null,
+                child: avatarUrl == null || avatarUrl!.isEmpty
+                    ? const Icon(Icons.person, color: Colors.white, size: 22)
+                    : null,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1314,65 +1384,30 @@ class _PostCardX extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Text(
-                          username,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                            fontSize: 15,
+                        Expanded(
+                          child: Text.rich(
+                            TextSpan(
+                              children: [
+                                TextSpan(
+                                  text: username,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: ' @$login · $time',
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          '@$login',
-                          style: const TextStyle(color: Colors.grey, fontSize: 14),
-                        ),
-                        const Text(' · ', style: TextStyle(color: Colors.grey)),
-                        Text(
-                          time,
-                          style: const TextStyle(color: Colors.grey, fontSize: 14),
-                        ),
-                        const Spacer(),
-                        PopupMenuButton<String>(
-                          icon: const Icon(Icons.more_horiz, color: Colors.grey, size: 20),
-                          color: const Color(0xFF1A1A2E),
-                          onSelected: (v) {
-                            if (v == 'bookmark') onBookmark();
-                            if (v == 'report') onReport();
-                          },
-                          itemBuilder: (_) => [
-                            PopupMenuItem(
-                              value: 'bookmark',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    bookmarked
-                                        ? Icons.bookmark
-                                        : Icons.bookmark_border,
-                                    color: const Color(0xFF7C3AED),
-                                    size: 18,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    bookmarked ? 'Убрать из закладок' : 'В закладки',
-                                    style: const TextStyle(color: Colors.white),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'report',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.flag_outlined,
-                                      color: Colors.redAccent, size: 18),
-                                  SizedBox(width: 8),
-                                  Text('Пожаловаться',
-                                      style: TextStyle(color: Colors.white)),
-                                ],
-                              ),
-                            ),
-                          ],
                         ),
                       ],
                     ),
@@ -1381,7 +1416,10 @@ class _PostCardX extends StatelessWidget {
                       Text(
                         parsed.text,
                         style: const TextStyle(
-                            color: Colors.white, fontSize: 15, height: 1.35),
+                          color: Colors.white,
+                          fontSize: 15,
+                          height: 1.35,
+                        ),
                       ),
                     ] else if (!parsed.hasMedia &&
                         !parsed.hasQuote &&
@@ -1391,7 +1429,10 @@ class _PostCardX extends StatelessWidget {
                       Text(
                         _stripCodec(rawFallback),
                         style: const TextStyle(
-                            color: Colors.white, fontSize: 15, height: 1.35),
+                          color: Colors.white,
+                          fontSize: 15,
+                          height: 1.35,
+                        ),
                       ),
                     ],
                     if (parsed.hasTags) ...[
@@ -1406,7 +1447,9 @@ class _PostCardX extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(8),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 2, vertical: 1),
+                                    horizontal: 2,
+                                    vertical: 1,
+                                  ),
                                   child: Text(
                                     '#$t',
                                     style: const TextStyle(
@@ -1427,13 +1470,20 @@ class _PostCardX extends StatelessWidget {
                       ...parsed.imageUrls.map(
                         (u) => Padding(
                           padding: const EdgeInsets.only(bottom: 8),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image.network(
-                              u,
-                              fit: BoxFit.contain,
-                              errorBuilder: (_, __, ___) => const Text('…'),
-                            ),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              return ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Image.network(
+                                  u,
+                                  width: constraints.maxWidth,
+                                  fit: BoxFit.contain,
+                                  alignment: Alignment.centerLeft,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const Text('…'),
+                                ),
+                              );
+                            },
                           ),
                         ),
                       ),
@@ -1468,29 +1518,51 @@ class _PostCardX extends StatelessWidget {
                 onTap: onComment,
                 borderRadius: BorderRadius.circular(20),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   child: Row(
                     children: [
-                      const Icon(Icons.chat_bubble_outline,
-                          size: 18, color: Colors.grey),
+                      const Icon(
+                        Icons.chat_bubble_outline,
+                        size: 18,
+                        color: Colors.grey,
+                      ),
                       const SizedBox(width: 4),
-                      Text('$comments',
-                          style: const TextStyle(
-                              color: Colors.grey, fontSize: 13)),
+                      Text(
+                        '$comments',
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 13,
+                        ),
+                      ),
                     ],
                   ),
                 ),
               ),
               InkWell(
-                onTap: onQuote,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                onTap: parsed.hasQuote ? null : onQuote,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   child: Row(
                     children: [
-                      Icon(Icons.repeat, size: 18, color: Colors.grey),
-                      SizedBox(width: 4),
-                      Text('Цитата',
-                          style: TextStyle(color: Colors.grey, fontSize: 13)),
+                      Icon(
+                        Icons.repeat,
+                        size: 18,
+                        color: parsed.hasQuote ? Colors.white24 : Colors.grey,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Цитата',
+                        style: TextStyle(
+                          color: parsed.hasQuote ? Colors.white24 : Colors.grey,
+                          fontSize: 13,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1499,7 +1571,10 @@ class _PostCardX extends StatelessWidget {
                 onTap: onLike,
                 borderRadius: BorderRadius.circular(20),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   child: Row(
                     children: [
                       Icon(
@@ -1516,18 +1591,6 @@ class _PostCardX extends StatelessWidget {
                         ),
                       ),
                     ],
-                  ),
-                ),
-              ),
-              InkWell(
-                onTap: onBookmark,
-                borderRadius: BorderRadius.circular(20),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Icon(
-                    bookmarked ? Icons.bookmark : Icons.bookmark_border,
-                    size: 18,
-                    color: bookmarked ? const Color(0xFF7C3AED) : Colors.grey,
                   ),
                 ),
               ),
@@ -1582,8 +1645,11 @@ class _QuoteBlock extends StatelessWidget {
               preview,
               maxLines: 4,
               overflow: TextOverflow.ellipsis,
-              style:
-                  const TextStyle(color: Colors.grey, fontSize: 13, height: 1.3),
+              style: const TextStyle(
+                color: Colors.grey,
+                fontSize: 13,
+                height: 1.3,
+              ),
             ),
         ],
       ),

@@ -6,9 +6,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../database/services/profile_service.dart';
 import 'mini_page/auctions_list_page.dart';
 import 'mini_page/edit_profile_page.dart';
-import 'mini_page/favorites_page.dart';
 import 'mini_page/notifications_sheet.dart';
 import 'mini_page/reate_auction_page.dart';
+import 'mini_page/top_up_page.dart';
 
 // ? Страница профиля пользователя
 class BottomProfile extends StatefulWidget {
@@ -155,7 +155,7 @@ class _BottomProfileState extends State<BottomProfile> {
                           width: 90,
                           height: 90,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
+                          errorBuilder: (context, error, stackTrace) =>
                               const Text('😎', style: TextStyle(fontSize: 50)),
                           loadingBuilder: (_, child, progress) {
                             if (progress == null) return child;
@@ -177,7 +177,7 @@ class _BottomProfileState extends State<BottomProfile> {
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.orange.withOpacity(0.4),
+                      color: Colors.orange.withValues(alpha: 0.4),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
                     ),
@@ -249,7 +249,39 @@ class _BottomProfileState extends State<BottomProfile> {
             ],
           ),
 
-          const SizedBox(height: 30),
+          const SizedBox(height: 18),
+
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const TopUpPage()),
+                  );
+                },
+                icon: const Icon(Icons.add_card, color: Colors.white),
+                label: const Text(
+                  'Пополнить',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFF59E0B),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 18),
 
           // ? Кнопки редактирования и «Поделиться»
           Padding(
@@ -356,24 +388,12 @@ class _BottomProfileState extends State<BottomProfile> {
             onTap: _openNotifications,
           ),
           _ProfileMenuItem(
-            icon: '🔖',
-            title: 'Закладки',
-            subtitle: 'Сохранённые посты и аукционы',
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const FavoritesPage(),
-                ),
-              );
-            },
-          ),
-          _ProfileMenuItem(
             icon: '🚪',
             title: 'Выйти',
             subtitle: 'Выход из аккаунта',
             isLogout: true,
             onTap: () async {
+              final navigator = Navigator.of(context);
               final confirm = await showDialog<bool>(
                 context: context,
                 builder: (context) => AlertDialog(
@@ -407,9 +427,7 @@ class _BottomProfileState extends State<BottomProfile> {
               if (confirm == true && mounted) {
                 await _profileService.signOut();
                 if (mounted) {
-                  Navigator.of(
-                    context,
-                  ).pushNamedAndRemoveUntil('/auth', (route) => false);
+                  navigator.pushNamedAndRemoveUntil('/auth', (route) => false);
                 }
               }
             },
@@ -481,8 +499,8 @@ class _ProfileMenuItem extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           color: isLogout
-              ? Colors.red.withOpacity(0.15)
-              : const Color(0xFF7C3AED).withOpacity(0.15),
+              ? Colors.red.withValues(alpha: 0.15)
+              : const Color(0xFF7C3AED).withValues(alpha: 0.15),
         ),
         child: Center(child: Text(icon, style: const TextStyle(fontSize: 22))),
       ),
