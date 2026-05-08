@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -16,6 +17,7 @@ import '../database/post_content_codec.dart';
 import '../database/services/draft_service.dart';
 import '../database/services/media_service.dart';
 import '../database/services/tag_service.dart';
+import 'mini_page/user_profile_page.dart';
 import '../widgets/attachment_tile.dart';
 import '../widgets/voice_player.dart';
 
@@ -55,6 +57,9 @@ class _BottomFeedState extends State<BottomFeed> {
   List<Map<String, dynamic>> _popularTags = [];
   String? _activeTag;
   Set<int>? _tagFilterPostIds;
+  List<Map<String, dynamic>> _categories = [];
+  int? _activeCategoryId;
+  int? _composerCategoryId;
 
   late final RealtimeChannel _postSub;
   late final RealtimeChannel _likeSub;
@@ -69,6 +74,7 @@ class _BottomFeedState extends State<BottomFeed> {
     _postController.addListener(_scheduleDraftSave);
     _fetchPosts();
     _loadPopularTags();
+    _loadCategories();
     _loadDraft();
     _loadCurrentUserProfile();
     _subscribeToChanges();
@@ -143,6 +149,19 @@ class _BottomFeedState extends State<BottomFeed> {
     setState(() => _popularTags = tags);
   }
 
+  Future<void> _loadCategories() async {
+    try {
+      final rows = await supabase
+          .from('PostCategory')
+          .select('id, name')
+          .order('sort_order', ascending: true);
+      if (!mounted) return;
+      setState(() => _categories = List<Map<String, dynamic>>.from(rows));
+    } catch (e) {
+      debugPrint('Ошибка загрузки категорий: $e');
+    }
+  }
+
   Future<void> _applyTagFilter(String? tagName) async {
     if (tagName == null) {
       setState(() {
@@ -159,11 +178,20 @@ class _BottomFeedState extends State<BottomFeed> {
     });
   }
 
+  void _applyCategoryFilter(int? categoryId) {
+    setState(() => _activeCategoryId = categoryId);
+  }
+
   List<Map<String, dynamic>> _visiblePosts() {
     Iterable<Map<String, dynamic>> list = _posts;
     if (_tagFilterPostIds != null) {
       list = list.where(
         (post) => _tagFilterPostIds!.contains((post['id'] as num).toInt()),
+      );
+    }
+    if (_activeCategoryId != null) {
+      list = list.where(
+        (post) => (post['category_id'] as num?)?.toInt() == _activeCategoryId,
       );
     }
     final q = _feedSearchController.text.trim().toLowerCase();
@@ -229,6 +257,8 @@ class _BottomFeedState extends State<BottomFeed> {
             content,
             like,
             user_id,
+            category_id,
+            category:PostCategory!category_id (id, name),
             user:User!user_id (username, avatar, login),
             likes:PostLike!post_id (count),
             comments:Comment!post_id (count)
@@ -323,16 +353,35 @@ class _BottomFeedState extends State<BottomFeed> {
     }
   }
 
-  Future<void> _addComment(int postId, String text) async {
+  Future<void> _addComment(
+    int postId,
+    String text, {
+    int? parentCommentId,
+    Map<String, dynamic>? quoteSnapshot,
+  }) async {
     final user = supabase.auth.currentUser;
     if (user == null || text.trim().isEmpty) return;
 
     try {
-      await supabase.from('Comment').insert({
+      final row = {
         'user_id': user.id,
         'post_id': postId,
-        'content': text.trim(),
-      });
+        'parent_comment_id': parentCommentId,
+        'content': _encodeComment(
+          text.trim(),
+          quoteSnapshot: quoteSnapshot,
+        ),
+      };
+      try {
+        await supabase.from('Comment').insert(row);
+      } catch (e) {
+        // Fallback for DBs where threaded comments migration isn't applied yet.
+        await supabase.from('Comment').insert({
+          'user_id': user.id,
+          'post_id': postId,
+          'content': row['content'],
+        });
+      }
       await _notifyPostOwner(postId, 'post_commented', {
         'post_id': postId,
         'sender_id': user.id,
@@ -539,7 +588,7 @@ class _BottomFeedState extends State<BottomFeed> {
       final u = _quoteFrom!['user'] as Map<String, dynamic>? ?? {};
       qs = {
         'id': qid,
-        'text': (_quoteFrom!['content'] as String?) ?? '',
+        'text': _previewText((_quoteFrom!['content'] as String?) ?? ''),
         'user': u['username'] ?? u['login'] ?? '',
         'login': u['login'],
       };
@@ -562,7 +611,11 @@ class _BottomFeedState extends State<BottomFeed> {
     try {
       final inserted = await supabase
           .from('Post')
-          .insert({'user_id': user.id, 'content': encoded})
+          .insert({
+            'user_id': user.id,
+            'content': encoded,
+            'category_id': _composerCategoryId,
+          })
           .select('id')
           .single();
       final postId = (inserted['id'] as num).toInt();
@@ -586,6 +639,7 @@ class _BottomFeedState extends State<BottomFeed> {
         _draftAudioUrl = null;
         _draftAudioMs = null;
         _quoteFrom = null;
+        _composerCategoryId = null;
       });
       await DraftService.instance.clear();
       await _fetchPosts();
@@ -625,6 +679,8 @@ class _BottomFeedState extends State<BottomFeed> {
   void _showComments(int postId) {
     final controller = TextEditingController();
     var ver = 0;
+    int? replyToId;
+    Map<String, dynamic>? replyToSnapshot;
 
     showModalBottomSheet(
       context: context,
@@ -642,15 +698,31 @@ class _BottomFeedState extends State<BottomFeed> {
           return StatefulBuilder(
             builder: (context, setModal) {
               Future<List<Map<String, dynamic>>> load() async {
-                final r = await supabase
-                    .from('Comment')
-                    .select('''
-                      id, content, created_at,
-                      user:User!user_id (username, login, avatar)
-                    ''')
-                    .eq('post_id', postId)
-                    .order('created_at', ascending: true);
-                return List<Map<String, dynamic>>.from(r);
+                try {
+                  final r = await supabase
+                      .from('Comment')
+                      .select('''
+                        id, user_id, parent_comment_id, content, created_at,
+                        user:User!user_id (username, login, avatar)
+                      ''')
+                      .eq('post_id', postId)
+                      .order('created_at', ascending: true);
+                  return List<Map<String, dynamic>>.from(r);
+                } catch (_) {
+                  final r = await supabase
+                      .from('Comment')
+                      .select('''
+                        id, user_id, content, created_at,
+                        user:User!user_id (username, login, avatar)
+                      ''')
+                      .eq('post_id', postId)
+                      .order('created_at', ascending: true);
+                  final list = List<Map<String, dynamic>>.from(r);
+                  for (final c in list) {
+                    c['parent_comment_id'] = null;
+                  }
+                  return list;
+                }
               }
 
               return Column(
@@ -677,49 +749,148 @@ class _BottomFeedState extends State<BottomFeed> {
                           );
                         }
                         final comments = snapshot.data!;
-                        return ListView.builder(
+                        final byParent = <int?, List<Map<String, dynamic>>>{};
+                        for (final c in comments) {
+                          final parent = (c['parent_comment_id'] as num?)?.toInt();
+                          byParent.putIfAbsent(parent, () => []).add(c);
+                        }
+                        Widget buildTree(int? parentId, int depth) {
+                          final items = byParent[parentId] ?? const [];
+                          return Column(
+                            children: items.map((c) {
+                              final u = c['user'] as Map<String, dynamic>? ?? {};
+                              final name = (u['username'] as String?) ?? 'user';
+                              final login = (u['login'] as String?) ?? '';
+                              final decoded = _decodeComment(
+                                c['content'] as String? ?? '',
+                              );
+                              final created = DateTime.tryParse(
+                                c['created_at'] as String? ?? '',
+                              );
+                              final uid = c['user_id'] as String?;
+                              final commentId = (c['id'] as num).toInt();
+                              return Padding(
+                                padding: EdgeInsets.only(left: depth * 18.0, bottom: 8),
+                                child: Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.04),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: Colors.white12),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      InkWell(
+                                        onTap: uid == null
+                                            ? null
+                                            : () {
+                                                Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(
+                                                    builder: (_) => UserProfilePage(userId: uid),
+                                                  ),
+                                                );
+                                              },
+                                        child: Row(
+                                          children: [
+                                            CircleAvatar(
+                                              radius: 14,
+                                              backgroundColor: const Color(0xFF7C3AED),
+                                              child: Text(
+                                                name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                                style: const TextStyle(color: Colors.white),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                                login.isNotEmpty ? '$name @$login' : name,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                            if (created != null)
+                                              Text(
+                                                timeago.format(created, locale: 'ru'),
+                                                style: const TextStyle(color: Colors.grey, fontSize: 11),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (decoded.quoteSnapshot != null) ...[
+                                        const SizedBox(height: 6),
+                                        _CommentQuoteTree(snapshot: decoded.quoteSnapshot!),
+                                      ],
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        decoded.text,
+                                        style: const TextStyle(color: Colors.white70),
+                                      ),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: TextButton(
+                                          onPressed: () {
+                                            replyToId = commentId;
+                                            replyToSnapshot = {
+                                              'comment_id': commentId,
+                                              'user': name,
+                                              'text': decoded.text,
+                                              if (decoded.quoteSnapshot != null)
+                                                'quote': decoded.quoteSnapshot,
+                                            };
+                                            controller.text = '@$name ';
+                                            setModal(() {});
+                                          },
+                                          child: const Text('Ответить'),
+                                        ),
+                                      ),
+                                      buildTree(commentId, depth + 1),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          );
+                        }
+                        return ListView(
                           controller: scrollController,
                           padding: const EdgeInsets.symmetric(horizontal: 16),
-                          itemCount: comments.length,
-                          itemBuilder: (context, i) {
-                            final c = comments[i];
-                            final u = c['user'] as Map<String, dynamic>? ?? {};
-                            final un = u['username'] as String? ?? 'user';
-                            return ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: const Color(0xFF7C3AED),
-                                child: Text(
-                                  un.isNotEmpty ? un[0].toUpperCase() : '?',
-                                  style: const TextStyle(color: Colors.white),
-                                ),
-                              ),
-                              title: Text(
-                                un,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              subtitle: Text(
-                                c['content'] ?? '',
-                                style: const TextStyle(color: Colors.white70),
-                              ),
-                              trailing: Text(
-                                timeago.format(
-                                  DateTime.parse(c['created_at'] as String),
-                                  locale: 'ru',
-                                ),
-                                style: const TextStyle(
-                                  color: Colors.grey,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            );
-                          },
+                          children: [buildTree(null, 0)],
                         );
                       },
                     ),
                   ),
+                  if (replyToSnapshot != null)
+                    Container(
+                      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Ответ на ${replyToSnapshot!['user']}',
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 18, color: Colors.grey),
+                            onPressed: () {
+                              replyToId = null;
+                              replyToSnapshot = null;
+                              setModal(() {});
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
                   Padding(
                     padding: EdgeInsets.fromLTRB(
                       16,
@@ -751,8 +922,15 @@ class _BottomFeedState extends State<BottomFeed> {
                             color: Color(0xFF7C3AED),
                           ),
                           onPressed: () async {
-                            await _addComment(postId, controller.text);
+                            await _addComment(
+                              postId,
+                              controller.text,
+                              parentCommentId: replyToId,
+                              quoteSnapshot: replyToSnapshot,
+                            );
                             controller.clear();
+                            replyToId = null;
+                            replyToSnapshot = null;
                             ver++;
                             setModal(() {});
                             await _fetchPosts();
@@ -859,6 +1037,8 @@ class _BottomFeedState extends State<BottomFeed> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  _categoriesRow(),
+                  const SizedBox(height: 10),
                   _tagsRow(),
                   const SizedBox(height: 12),
                   if (_quoteFrom != null) _quoteChip(),
@@ -915,12 +1095,15 @@ class _BottomFeedState extends State<BottomFeed> {
                     userData['username'] as String? ?? 'Пользователь';
                 final login = userData['login'] as String? ?? '';
                 final avatarUrl = userData['avatar'] as String?;
+                final userId = post['user_id'] as String?;
                 final time = timeago.format(
                   DateTime.parse(post['created_at'] as String),
                   locale: 'ru',
                 );
                 final rawContent = post['content'] as String? ?? '';
                 final parsed = decodePostContent(rawContent);
+                final category =
+                    post['category'] as Map<String, dynamic>?;
 
                 final likesCount = (() {
                   final likes = post['likes'];
@@ -954,23 +1137,28 @@ class _BottomFeedState extends State<BottomFeed> {
                     _showComments(postId);
                   },
                   onQuote: () {
-                    if (parsed.hasQuote) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Нельзя цитировать цитату'),
-                        ),
-                      );
-                      return;
-                    }
                     setState(() {
                       _quoteFrom = {
                         'id': postId,
-                        'content': rawContent,
+                        'content': parsed.text.isNotEmpty
+                            ? parsed.text
+                            : _previewText(rawContent),
                         'user': userData,
                       };
                     });
                   },
                   onTag: (t) => _applyTagFilter(t),
+                  categoryName: category?['name'] as String?,
+                  onOpenUser: userId == null
+                      ? null
+                      : () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => UserProfilePage(userId: userId),
+                            ),
+                          );
+                        },
                 );
               }, childCount: visible.length),
             ),
@@ -1006,6 +1194,31 @@ class _BottomFeedState extends State<BottomFeed> {
               label: '#${t['name']}',
               active: _activeTag == t['name'].toString(),
               onTap: () => _applyTagFilter(t['name'].toString()),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _categoriesRow() {
+    if (_categories.isEmpty && _activeCategoryId == null) {
+      return const SizedBox.shrink();
+    }
+    return SizedBox(
+      height: 36,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _tagChip(
+            label: 'Все категории',
+            active: _activeCategoryId == null,
+            onTap: () => _applyCategoryFilter(null),
+          ),
+          for (final c in _categories)
+            _tagChip(
+              label: c['name'].toString(),
+              active: _activeCategoryId == (c['id'] as num).toInt(),
+              onTap: () => _applyCategoryFilter((c['id'] as num).toInt()),
             ),
         ],
       ),
@@ -1134,6 +1347,14 @@ class _BottomFeedState extends State<BottomFeed> {
     );
   }
 
+  String? _composerHashtagQuery() {
+    final text = _postController.text;
+    final m = RegExp(r'(?:^|\s)#([\p{L}\p{N}_]{1,40})$', unicode: true)
+        .firstMatch(text);
+    if (m == null) return null;
+    return m.group(1)?.toLowerCase();
+  }
+
   Widget _composer(User? me, Map<String, dynamic>? profile) {
     final avatarUrl = profile?['avatar'] as String?;
     final username = profile?['username'] as String?;
@@ -1188,6 +1409,81 @@ class _BottomFeedState extends State<BottomFeed> {
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 34,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _tagChip(
+                  label: 'Без категории',
+                  active: _composerCategoryId == null,
+                  onTap: () => setState(() => _composerCategoryId = null),
+                ),
+                for (final c in _categories)
+                  _tagChip(
+                    label: c['name'].toString(),
+                    active: _composerCategoryId == (c['id'] as num).toInt(),
+                    onTap: () => setState(
+                      () => _composerCategoryId = (c['id'] as num).toInt(),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (_composerHashtagQuery() != null) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ..._popularTags
+                    .where(
+                      (t) => t['name']
+                          .toString()
+                          .startsWith(_composerHashtagQuery()!),
+                    )
+                    .take(5)
+                    .map(
+                      (t) => ActionChip(
+                        label: Text('#${t['name']}'),
+                        onPressed: () {
+                          final q = _composerHashtagQuery()!;
+                          _postController.text = _postController.text.replaceFirst(
+                            RegExp(
+                              '#$q\$',
+                              caseSensitive: false,
+                              unicode: true,
+                            ),
+                            '#${t['name']} ',
+                          );
+                          _postController.selection = TextSelection.collapsed(
+                            offset: _postController.text.length,
+                          );
+                          setState(() {});
+                        },
+                      ),
+                    ),
+                ActionChip(
+                  label: Text('Создать #${_composerHashtagQuery()!}'),
+                  onPressed: () {
+                    final q = _composerHashtagQuery()!;
+                    if (!_postController.text.endsWith(' ')) {
+                      _postController.text = '${_postController.text} ';
+                    }
+                    _postController.text = _postController.text.replaceAll(
+                      RegExp('#$q\\s*\$', caseSensitive: false, unicode: true),
+                      '#$q ',
+                    );
+                    _postController.selection = TextSelection.collapsed(
+                      offset: _postController.text.length,
+                    );
+                    setState(() {});
+                  },
+                ),
+              ],
+            ),
+          ],
           if (_draftImages.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
@@ -1354,6 +1650,84 @@ String _previewText(String s) {
   return s.length > 120 ? '${s.substring(0, 120)}…' : s;
 }
 
+const String _commentPrefix = 'GHCOMMENT:';
+
+String _encodeComment(String text, {Map<String, dynamic>? quoteSnapshot}) {
+  if (quoteSnapshot == null || quoteSnapshot.isEmpty) return text;
+  return '$_commentPrefix${jsonEncode({'t': text, 'qs': quoteSnapshot})}';
+}
+
+_CommentPayload _decodeComment(String raw) {
+  final s = raw.trim();
+  if (!s.startsWith(_commentPrefix)) return _CommentPayload(text: raw);
+  try {
+    final body = s.substring(_commentPrefix.length);
+    final map = Map<String, dynamic>.from(jsonDecode(body) as Map);
+    return _CommentPayload(
+      text: map['t']?.toString() ?? '',
+      quoteSnapshot: map['qs'] is Map
+          ? Map<String, dynamic>.from(map['qs'] as Map)
+          : null,
+    );
+  } catch (_) {
+    return _CommentPayload(text: raw);
+  }
+}
+
+class _CommentPayload {
+  final String text;
+  final Map<String, dynamic>? quoteSnapshot;
+  const _CommentPayload({required this.text, this.quoteSnapshot});
+}
+
+class _CommentQuoteTree extends StatelessWidget {
+  final Map<String, dynamic> snapshot;
+  const _CommentQuoteTree({required this.snapshot});
+
+  @override
+  Widget build(BuildContext context) {
+    final user = (snapshot['user'] as String?) ?? 'Комментарий';
+    final text = _previewText((snapshot['text'] as String?) ?? '');
+    final nested = snapshot['quote'] is Map
+        ? Map<String, dynamic>.from(snapshot['quote'] as Map)
+        : null;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: Colors.white.withValues(alpha: 0.35), width: 2),
+        ),
+        color: Colors.white.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$user:',
+            style: const TextStyle(
+              color: Color(0xFFBDA8FF),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (text.isNotEmpty)
+            Text(
+              text,
+              style: const TextStyle(color: Colors.grey, fontSize: 12, height: 1.3),
+            ),
+          if (nested != null) ...[
+            const SizedBox(height: 6),
+            _CommentQuoteTree(snapshot: nested),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _PostCardX extends StatelessWidget {
   final int postId;
   final String username;
@@ -1369,6 +1743,8 @@ class _PostCardX extends StatelessWidget {
   final VoidCallback onComment;
   final VoidCallback onQuote;
   final ValueChanged<String> onTag;
+  final VoidCallback? onOpenUser;
+  final String? categoryName;
 
   const _PostCardX({
     required this.postId,
@@ -1385,6 +1761,8 @@ class _PostCardX extends StatelessWidget {
     required this.onComment,
     required this.onQuote,
     required this.onTag,
+    this.onOpenUser,
+    this.categoryName,
   });
 
   @override
@@ -1404,15 +1782,19 @@ class _PostCardX extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: const Color(0xFF7C3AED),
-                backgroundImage: avatarUrl != null && avatarUrl!.isNotEmpty
-                    ? NetworkImage(avatarUrl!)
-                    : null,
-                child: avatarUrl == null || avatarUrl!.isEmpty
-                    ? const Icon(Icons.person, color: Colors.white, size: 22)
-                    : null,
+              InkWell(
+                onTap: onOpenUser,
+                borderRadius: BorderRadius.circular(20),
+                child: CircleAvatar(
+                  radius: 20,
+                  backgroundColor: const Color(0xFF7C3AED),
+                  backgroundImage: avatarUrl != null && avatarUrl!.isNotEmpty
+                      ? NetworkImage(avatarUrl!)
+                      : null,
+                  child: avatarUrl == null || avatarUrl!.isEmpty
+                      ? const Icon(Icons.person, color: Colors.white, size: 22)
+                      : null,
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1422,28 +1804,31 @@ class _PostCardX extends StatelessWidget {
                     Row(
                       children: [
                         Expanded(
-                          child: Text.rich(
-                            TextSpan(
-                              children: [
-                                TextSpan(
-                                  text: username,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    color: Colors.white,
-                                    fontSize: 15,
+                          child: InkWell(
+                            onTap: onOpenUser,
+                            child: Text.rich(
+                              TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: username,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                    ),
                                   ),
-                                ),
-                                TextSpan(
-                                  text: ' @$login · $time',
-                                  style: const TextStyle(
-                                    color: Colors.grey,
-                                    fontSize: 14,
+                                  TextSpan(
+                                    text: ' @$login · $time',
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 14,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ],
@@ -1499,6 +1884,17 @@ class _PostCardX extends StatelessWidget {
                               ),
                             )
                             .toList(),
+                      ),
+                    ],
+                    if ((categoryName ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Категория: $categoryName',
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                     if (parsed.hasQuote) _QuoteBlock(data: parsed),
@@ -1579,7 +1975,7 @@ class _PostCardX extends StatelessWidget {
                 ),
               ),
               InkWell(
-                onTap: parsed.hasQuote ? null : onQuote,
+                onTap: onQuote,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
@@ -1590,13 +1986,13 @@ class _PostCardX extends StatelessWidget {
                       Icon(
                         Icons.repeat,
                         size: 18,
-                        color: parsed.hasQuote ? Colors.white24 : Colors.grey,
+                        color: Colors.grey,
                       ),
                       const SizedBox(width: 4),
                       Text(
                         'Цитата',
                         style: TextStyle(
-                          color: parsed.hasQuote ? Colors.white24 : Colors.grey,
+                          color: Colors.grey,
                           fontSize: 13,
                         ),
                       ),
@@ -1654,7 +2050,7 @@ class _QuoteBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = data.quoteSnapshot;
-    final preview = s?['text'] as String? ?? '';
+    final preview = _previewText(s?['text'] as String? ?? '');
     final u = s?['user'] as String? ?? s?['login'] as String? ?? '';
 
     return Container(

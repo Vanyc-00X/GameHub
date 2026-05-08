@@ -28,6 +28,7 @@ dependencies:
   xml: ^7.0.1
   firebase_core: ^4.7.0
   firebase_messaging: ^16.2.0
+  share_plus: ^11.0.0
 
 dev_dependencies:
   flutter_test:
@@ -42,3 +43,5 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+  assets:
+    - logo.png

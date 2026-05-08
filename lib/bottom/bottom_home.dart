@@ -201,14 +201,14 @@ class _BottomHomeState extends State<BottomHome> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 60, 12, 16),
       child: Row(
-        children: const [
+        children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Добро пожаловать 👋',
                     style: TextStyle(color: Color(0xFF8888AA), fontSize: 15)),
-                Text('GameVault',
+                Text('GameHub',
                     style: TextStyle(
                         fontSize: 32,
                         fontWeight: FontWeight.w900,
@@ -216,7 +216,17 @@ class _BottomHomeState extends State<BottomHome> {
               ],
             ),
           ),
-          NotificationBell(),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.asset(
+              'logo.png',
+              width: 32,
+              height: 32,
+              fit: BoxFit.cover,
+            ),
+          ),
+          const SizedBox(width: 10),
+          const NotificationBell(),
         ],
       ),
     );

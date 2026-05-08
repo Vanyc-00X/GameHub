@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
@@ -122,6 +123,14 @@ class _UserProfilePageState extends State<UserProfilePage> {
     }
   }
 
+  Future<void> _shareLogin() async {
+    final login = (_row?['login'] as String?)?.trim();
+    if (login == null || login.isEmpty) return;
+    await SharePlus.instance.share(
+      ShareParams(text: 'Профиль в GameHub: @$login'),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -129,6 +138,13 @@ class _UserProfilePageState extends State<UserProfilePage> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF0F0F1A),
         title: const Text('Профиль'),
+        actions: [
+          IconButton(
+            onPressed: _shareLogin,
+            tooltip: 'Поделиться логином',
+            icon: const Icon(Icons.share_outlined),
+          ),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
