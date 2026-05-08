@@ -10,9 +10,8 @@ class CreateAuctionPage extends StatefulWidget {
 
 class _CreateAuctionPageState extends State<CreateAuctionPage> {
   final _formKey = GlobalKey<FormState>();
-  final _titleController = TextEditingController();
+  final _steamUrlController = TextEditingController();
   final _minPriceController = TextEditingController();
-  final _imageUrlController = TextEditingController();
   final _steamKeyController = TextEditingController();
   
   int _hours = 24; // По умолчанию 24 часа
@@ -20,9 +19,8 @@ class _CreateAuctionPageState extends State<CreateAuctionPage> {
 
   @override
   void dispose() {
-    _titleController.dispose();
+    _steamUrlController.dispose();
     _minPriceController.dispose();
-    _imageUrlController.dispose();
     _steamKeyController.dispose();
     super.dispose();
   }
@@ -37,20 +35,25 @@ class _CreateAuctionPageState extends State<CreateAuctionPage> {
       if (user == null) throw Exception('Пользователь не авторизован');
 
       final endDate = DateTime.now().add(Duration(hours: _hours));
-      final imageUrl = _imageUrlController.text.trim();
-      if (imageUrl.isEmpty) {
-        throw Exception('Укажите URL обложки (url_item) — обязательное поле');
+      final steamUrl = _steamUrlController.text.trim();
+      if (steamUrl.isEmpty) {
+        throw Exception('Укажите URL игры в Steam');
       }
       final steam = _steamKeyController.text.trim();
       if (steam.isEmpty) {
         throw Exception('Укажите Steam-ключ (steam_key) — обязательное поле');
       }
+      final uri = Uri.tryParse(steamUrl);
+      if (uri == null || (!steamUrl.startsWith('http://') && !steamUrl.startsWith('https://'))) {
+        throw Exception('URL Steam должен начинаться с http:// или https://');
+      }
+      final titleFromUrl = _extractSteamTitle(steamUrl);
 
       // Только поля из схемы: Auction_items
       await Supabase.instance.client.from('Auction_items').insert({
-        'title': _titleController.text.trim(),
+        'title': titleFromUrl,
         'start_price': int.parse(_minPriceController.text),
-        'url_item': imageUrl,
+        'url_item': steamUrl,
         'steam_key': steam,
         'ended_at': endDate.toIso8601String(),
         'is_active': true,
@@ -83,6 +86,18 @@ class _CreateAuctionPageState extends State<CreateAuctionPage> {
     }
   }
 
+  String _extractSteamTitle(String steamUrl) {
+    try {
+      final u = Uri.parse(steamUrl);
+      final seg = u.pathSegments;
+      final appIdx = seg.indexOf('app');
+      if (appIdx != -1 && appIdx + 2 < seg.length) {
+        return seg[appIdx + 2].replaceAll('_', ' ');
+      }
+    } catch (_) {}
+    return steamUrl;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -113,38 +128,14 @@ class _CreateAuctionPageState extends State<CreateAuctionPage> {
               ),
               const SizedBox(height: 16),
 
-              // Название
+              // URL игры в Steam
               TextFormField(
-                controller: _titleController,
+                controller: _steamUrlController,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  labelText: 'Название игры *',
+                  labelText: 'URL игры в Steam *',
                   labelStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.title, color: Color(0xFF7C3AED)),
-                  filled: true,
-                  fillColor: const Color(0xFF1A1A2E),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Введите название';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-
-              // URL изображения
-              TextFormField(
-                controller: _imageUrlController,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'URL обложки (url_item) *',
-                  labelStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.image, color: Color(0xFF7C3AED)),
+                  prefixIcon: const Icon(Icons.link, color: Color(0xFF7C3AED)),
                   filled: true,
                   fillColor: const Color(0xFF1A1A2E),
                   border: OutlineInputBorder(
@@ -153,7 +144,7 @@ class _CreateAuctionPageState extends State<CreateAuctionPage> {
                   ),
                 ),
                 validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Введите ссылку на картинку' : null,
+                    (v == null || v.trim().isEmpty) ? 'Введите URL Steam' : null,
               ),
               
               const SizedBox(height: 24),

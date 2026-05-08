@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class TopUpPage extends StatefulWidget {
   const TopUpPage({super.key});
@@ -17,6 +18,48 @@ class _TopUpPageState extends State<TopUpPage> {
 
   int _selectedAmount = _amounts[2];
   String _selectedPayment = _paymentMethods.first.$1;
+  bool _submitting = false;
+
+  Future<void> _applyTopUp() async {
+    if (_submitting) return;
+    final me = Supabase.instance.client.auth.currentUser;
+    if (me == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Войдите в аккаунт')));
+      return;
+    }
+    setState(() => _submitting = true);
+    try {
+      final row = await Supabase.instance.client
+          .from('User')
+          .select('scope')
+          .eq('id', me.id)
+          .maybeSingle();
+      final current = (row?['scope'] as num?)?.toInt() ?? 0;
+      final next = current + _selectedAmount;
+      await Supabase.instance.client.from('User').update({
+        'scope': next,
+      }).eq('id', me.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Баланс пополнен: +$_selectedAmount ⭐ (теперь $next ⭐)',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Ошибка пополнения: $e')));
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -151,24 +194,15 @@ class _TopUpPageState extends State<TopUpPage> {
               width: double.infinity,
               height: 54,
               child: ElevatedButton(
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'Переход к оплате: $_selectedAmount ⭐, $_selectedPayment',
-                      ),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                },
+                onPressed: _submitting ? null : _applyTopUp,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF7C3AED),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                child: const Text(
-                  'Перейти к оплате',
+                child: Text(
+                  _submitting ? 'Начисление…' : 'Начислить очки',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 16,

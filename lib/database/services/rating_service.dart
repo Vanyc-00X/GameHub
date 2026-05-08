@@ -101,6 +101,20 @@ class RatingService {
     }
   }
 
+  Future<String?> deleteOwnRating(int ratingId) async {
+    final me = _sb.auth.currentUser;
+    if (me == null) return 'Войдите в аккаунт';
+    try {
+      final table = await _resolveFirstExisting(_ratingTables);
+      if (table == null) return 'Рейтинг недоступен';
+      await _sb.from(table).delete().eq('id', ratingId).eq('rater_id', me.id);
+      return null;
+    } catch (e) {
+      debugPrint('RatingService.deleteOwnRating ошибка: $e');
+      return 'Не удалось удалить оценку';
+    }
+  }
+
   /// Можно ли мне сейчас оценить контрагента по этому аукциону в указанной роли.
   /// Правила: аукцион завершён, у него есть winner_id, я — владелец или победитель,
   /// и я ещё не оценивал в этой роли.

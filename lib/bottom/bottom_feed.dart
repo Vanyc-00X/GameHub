@@ -1857,35 +1857,6 @@ class _PostCardX extends StatelessWidget {
                         ),
                       ),
                     ],
-                    if (parsed.hasTags) ...[
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: parsed.tags
-                            .map(
-                              (t) => InkWell(
-                                onTap: () => onTag(t),
-                                borderRadius: BorderRadius.circular(8),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 2,
-                                    vertical: 1,
-                                  ),
-                                  child: Text(
-                                    '#$t',
-                                    style: const TextStyle(
-                                      color: Color(0xFF7C3AED),
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ],
                     if ((categoryName ?? '').isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Text(

@@ -68,84 +68,122 @@ class _RecoveryPageState extends State<RecoveryPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(
-          children: [
-            SizedBox(height: MediaQuery.of(context).size.height * 0.1),
-            Image.asset(
-              'assets/images/logo.png',
-              height: MediaQuery.of(context).size.height * 0.3,
-              width: MediaQuery.of(context).size.width * 0.45,
-            ),
-            const SizedBox(height: 40),
-
-            const Text(
-              'Восстановление пароля',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Введите ваш email, и мы отправим инструкцию по восстановлению пароля',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 40),
-
-            TextField(
-              controller: _emailController,
-              keyboardType: TextInputType.emailAddress,
-              cursorColor: Colors.black,
-              style: const TextStyle(color: Colors.orange),
-              decoration: InputDecoration(
-                labelText: 'Email',
-                hintText: 'Введите email',
-                prefixIcon: const Icon(Icons.email),
-                labelStyle: const TextStyle(color: Colors.black),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(15),
-                  borderSide: const BorderSide(color: Colors.blue),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(15),
-                  borderSide: const BorderSide(color: Colors.black26),
-                ),
-              ),
-            ),
-            const SizedBox(height: 40),
-
-            SizedBox(
-              height: MediaQuery.of(context).size.height * 0.055,
-              width: MediaQuery.of(context).size.width * 0.8,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
+      backgroundColor: const Color(0xFF0F0F1A),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF0F0F1A), Color(0xFF1A1430)],
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Column(
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
                   ),
                 ),
-                onPressed: _isLoading ? null : _resetPassword,
-                child: Text(
-                  _isLoading ? 'Отправка...' : 'Восстановить пароль',
-                  style: const TextStyle(
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Image.asset(
+                    'logo.png',
+                    height: 120,
+                    width: 120,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                const Text(
+                  'Восстановление пароля',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
                     color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
                   ),
                 ),
-              ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Введите ваш email, и мы отправим письмо\nдля восстановления доступа.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14, color: Colors.white70),
+                ),
+                const SizedBox(height: 26),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _emailController,
+                        keyboardType: TextInputType.emailAddress,
+                        cursorColor: const Color(0xFF7C3AED),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          labelText: 'Email',
+                          hintText: 'example@mail.com',
+                          prefixIcon: const Icon(
+                            Icons.email_outlined,
+                            color: Color(0xFF7C3AED),
+                          ),
+                          labelStyle: const TextStyle(color: Colors.white70),
+                          hintStyle: const TextStyle(color: Colors.grey),
+                          filled: true,
+                          fillColor: Colors.white.withValues(alpha: 0.04),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(
+                              color: Color(0xFF7C3AED),
+                              width: 1.5,
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: Colors.white12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF7C3AED),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: _isLoading ? null : _resetPassword,
+                          child: Text(
+                            _isLoading
+                                ? 'Отправка...'
+                                : 'Отправить письмо для восстановления',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-
-            const SizedBox(height: 20),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text(
-                'Назад',
-                style: TextStyle(color: Colors.blue, fontSize: 16),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

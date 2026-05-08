@@ -18,10 +18,12 @@ class ChatService {
       {};
   final Map<String, RealtimeChannel> _msgChannels = {};
   final Map<String, List<Map<String, dynamic>>> _lastMessages = {};
+  final Map<String, Timer> _disposeTimers = {};
 
   // ? Возвращает стрим сообщений для конкретного чата с Realtime-обновлениями
   Stream<List<Map<String, dynamic>>> messagesStream(dynamic chatId) {
     final key = chatId.toString();
+    _disposeTimers.remove(key)?.cancel();
     if (_msgStreams.containsKey(key)) {
       return _msgStreams[key]!.stream;
     }
@@ -44,18 +46,7 @@ class ChatService {
     debugPrint('ChatService[_subscribeMessages]: chatKey=$chatKey');
 
     try {
-      final data = await supabase
-          .from('Message')
-          .select('id, content, created_at, sender_id')
-          .eq('chat_id', chatKey)
-          .order('created_at', ascending: true);
-
-      final messages = List<Map<String, dynamic>>.from(data);
-      _lastMessages[chatKey] = messages;
-      debugPrint(
-        'ChatService[_subscribeMessages]: загружено ${messages.length} сообщений',
-      );
-      controller.add(messages);
+      await _reloadMessages(chatKey, controller);
     } catch (e, st) {
       debugPrint('ChatService[_subscribeMessages]: ошибка загрузки: $e\n$st');
       controller.addError(e, st);
@@ -84,56 +75,7 @@ class ChatService {
               'hasListener=${controller.hasListener}',
             );
 
-            final current = List<Map<String, dynamic>>.from(
-              _lastMessages[chatKey] ?? [],
-            );
-            final eventType = payload.eventType;
-
-            if (eventType == PostgresChangeEvent.insert) {
-              final newMsg = Map<String, dynamic>.from(payload.newRecord);
-              if (newMsg['id'] is String) {
-                newMsg['id'] =
-                    int.tryParse(newMsg['id'].toString()) ?? newMsg['id'];
-              }
-              current.add(newMsg);
-              current.sort(
-                (a, b) => DateTime.parse(
-                  a['created_at'] as String,
-                ).compareTo(DateTime.parse(b['created_at'] as String)),
-              );
-              debugPrint(
-                'ChatService[Realtime]: INSERT, теперь ${current.length} сообщений',
-              );
-            } else if (eventType == PostgresChangeEvent.update) {
-              final updated = payload.newRecord;
-              final idx = current.indexWhere(
-                (m) => m['id'].toString() == updated['id'].toString(),
-              );
-              if (idx != -1) {
-                current[idx] = Map<String, dynamic>.from(updated);
-                debugPrint('ChatService[Realtime]: UPDATE на индексе $idx');
-              }
-            } else if (eventType == PostgresChangeEvent.delete) {
-              final deleted = payload.oldRecord;
-              final before = current.length;
-              current.removeWhere(
-                (m) => m['id'].toString() == deleted['id'].toString(),
-              );
-              debugPrint(
-                'ChatService[Realtime]: DELETE, было $before, стало ${current.length}',
-              );
-            }
-
-            _lastMessages[chatKey] = current;
-            debugPrint(
-              'ChatService[Realtime]: controller.hasListener=${controller.hasListener}',
-            );
-            if (controller.hasListener) {
-              controller.add(current);
-              debugPrint('ChatService[Realtime]: событие отправлено в стрим');
-            } else {
-              debugPrint('ChatService[Realtime]: ВНИМАНИЕ — нет слушателей!');
-            }
+            _reloadMessages(chatKey, controller);
           },
         )
         .subscribe((status, [errorMsg]) {
@@ -148,11 +90,32 @@ class ChatService {
 
   // ? Отписывается от Realtime-канала сообщений чата
   void _unsubscribeMessages(String chatKey) {
-    debugPrint('ChatService: отписка от сообщений chatKey=$chatKey');
-    _msgChannels[chatKey]?.unsubscribe();
-    _msgChannels.remove(chatKey);
-    _msgStreams.remove(chatKey);
-    _lastMessages.remove(chatKey);
+    _disposeTimers.remove(chatKey)?.cancel();
+    // Защита от мерцания StreamBuilder при rebuild: удаляем канал с задержкой.
+    _disposeTimers[chatKey] = Timer(const Duration(seconds: 2), () {
+      debugPrint('ChatService: отписка от сообщений chatKey=$chatKey');
+      _msgChannels[chatKey]?.unsubscribe();
+      _msgChannels.remove(chatKey);
+      _msgStreams.remove(chatKey);
+      _lastMessages.remove(chatKey);
+      _disposeTimers.remove(chatKey);
+    });
+  }
+
+  Future<void> _reloadMessages(
+    String chatKey,
+    StreamController<List<Map<String, dynamic>>> controller,
+  ) async {
+    final data = await supabase
+        .from('Message')
+        .select('id, content, created_at, sender_id')
+        .eq('chat_id', chatKey)
+        .order('created_at', ascending: true);
+    final messages = List<Map<String, dynamic>>.from(data);
+    _lastMessages[chatKey] = messages;
+    if (controller.hasListener) {
+      controller.add(messages);
+    }
   }
 
   // ===== Стрим чатов пользователя =====
@@ -299,8 +262,9 @@ class ChatService {
 
       final chatsWithLastMsg = <Map<String, dynamic>>[];
       for (final row in response) {
-        final chatData = row['chat'];
-        if (chatData == null) continue;
+        final chatDataRaw = row['chat'];
+        if (chatDataRaw == null) continue;
+        final chatData = Map<String, dynamic>.from(chatDataRaw as Map);
 
         final chatId = chatData['id'];
         final lastMessage = await supabase
@@ -310,7 +274,43 @@ class ChatService {
             .order('created_at', ascending: false)
             .limit(1);
 
-        chatsWithLastMsg.add({...row, 'last_message': lastMessage});
+        final type = chatData['type_chat']?.toString() ?? '';
+        if (type == 'private') {
+          final memberRows = await supabase
+              .from('ChatMember')
+              .select('user_id')
+              .eq('chat_id', chatId);
+          final ids = List<Map<String, dynamic>>.from(memberRows)
+              .map((m) => m['user_id']?.toString())
+              .whereType<String>()
+              .toList();
+          final peerId = ids.firstWhere(
+            (id) => id != user.id,
+            orElse: () => user.id,
+          );
+          if (peerId != user.id) {
+            final peer = await _loadUserById(peerId);
+            if (peer != null) {
+              final uname = (peer['username'] as String?)?.trim();
+              final login = (peer['login'] as String?)?.trim();
+              chatData['namechat'] = (uname != null && uname.isNotEmpty)
+                  ? uname
+                  : '@${login ?? 'user'}';
+              chatData['peer'] = {
+                'id': peer['id'],
+                'username': peer['username'],
+                'login': peer['login'],
+                'avatar': peer['avatar'],
+              };
+            }
+          }
+        }
+
+        chatsWithLastMsg.add({
+          ...Map<String, dynamic>.from(row),
+          'chat': chatData,
+          'last_message': lastMessage,
+        });
       }
 
       if (!_chatsController.isClosed) {
@@ -325,6 +325,20 @@ class ChatService {
         _emitChats(<Map<String, dynamic>>[]);
       }
     }
+  }
+
+  Future<Map<String, dynamic>?> _loadUserById(String userId) async {
+    for (final table in _userTableCandidates) {
+      try {
+        final row = await supabase
+            .from(table)
+            .select('id, username, login, avatar')
+            .eq('id', userId)
+            .maybeSingle();
+        if (row != null) return Map<String, dynamic>.from(row);
+      } catch (_) {}
+    }
+    return null;
   }
 
   // ? Обновляет список чатов вручную (pull-to-refresh)
@@ -438,10 +452,38 @@ class ChatService {
     }
 
     if (target == null) return null;
+    if (target['id']?.toString() == currentUser.id) return null;
+
+    final mine = await supabase
+        .from('ChatMember')
+        .select('chat_id')
+        .eq('user_id', currentUser.id);
+    final myChatIds = List<Map<String, dynamic>>.from(mine)
+        .map((r) => (r['chat_id'] as num).toInt())
+        .toList();
+    if (myChatIds.isNotEmpty) {
+      final peerRows = await supabase
+          .from('ChatMember')
+          .select('chat_id')
+          .eq('user_id', target['id'])
+          .inFilter('chat_id', myChatIds);
+      if (peerRows.isNotEmpty) {
+        final existingId = (peerRows.first['chat_id'] as num).toInt();
+        final existing = await supabase
+            .from('Chat')
+            .select()
+            .eq('id', existingId)
+            .maybeSingle();
+        if (existing != null && existing['type_chat'] == 'private') {
+          await _loadUserChats();
+          return Map<String, dynamic>.from(existing);
+        }
+      }
+    }
 
     final newChat = await supabase
         .from('Chat')
-        .insert({'namechat': target['username'], 'type_chat': 'private'})
+        .insert({'namechat': 'Личный чат', 'type_chat': 'private'})
         .select()
         .single();
 

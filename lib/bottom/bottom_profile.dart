@@ -131,6 +131,7 @@ class _BottomProfileState extends State<BottomProfile> {
     final activeAuctions = _profileData!['activeAuctions'] as int;
     final completedAuctions = _profileData!['completedAuctions'] as int;
     final rating = _profileData!['rating'] as double;
+    final ratingCount = _profileData!['ratingCount'] as int? ?? 0;
     final points = _profileData!['points'] as int? ?? 0;
     final joinedAt = DateTime.parse(_profileData!['joinedAt']);
     final yearsOnPlatform = DateTime.now().difference(joinedAt).inDays ~/ 365;
@@ -242,13 +243,21 @@ class _BottomProfileState extends State<BottomProfile> {
               ),
               const SizedBox(width: 30),
               _ProfileStat(
-                value: rating.toString(),
+                value: ratingCount == 0 ? '—' : rating.toStringAsFixed(1),
                 label: 'Рейтинг',
                 icon: Icons.star_border,
                 color: Colors.yellow,
               ),
             ],
           ),
+          if (ratingCount > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                '$ratingCount ${_pluralize(ratingCount, 'оценка', 'оценки', 'оценок')}',
+                style: const TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ),
 
           const SizedBox(height: 18),
 
@@ -261,7 +270,9 @@ class _BottomProfileState extends State<BottomProfile> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const TopUpPage()),
-                  );
+                  ).then((v) {
+                    if (v == true) _loadProfile();
+                  });
                 },
                 icon: const Icon(Icons.add_card, color: Colors.white),
                 label: const Text(

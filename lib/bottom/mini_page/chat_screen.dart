@@ -17,6 +17,7 @@ import '../../database/services/media_service.dart';
 import '../../database/services/notification_preferences_service.dart';
 import '../../widgets/attachment_tile.dart';
 import '../../widgets/voice_player.dart';
+import 'user_profile_page.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -32,6 +33,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  static const List<String> _userTables = ['User', 'users', 'user', '"User"'];
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   final _chatService = ChatService();
@@ -46,6 +48,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _sending = false;
   bool _muted = false;
+  Map<String, dynamic>? _peerUser;
 
   Future<void> _sendText() async {
     final text = _messageController.text.trim();
@@ -58,6 +61,47 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _loadMuteState();
+    _loadPeerUser();
+  }
+
+  Future<void> _loadPeerUser() async {
+    final me = supabase.auth.currentUser?.id;
+    if (me == null) return;
+    try {
+      final chat = await supabase
+          .from('Chat')
+          .select('id, type_chat')
+          .eq('id', widget.chatId)
+          .maybeSingle();
+      final type = chat?['type_chat']?.toString();
+      if (type != 'private') return;
+
+      final members = await supabase
+          .from('ChatMember')
+          .select('user_id')
+          .eq('chat_id', widget.chatId);
+      final ids = List<Map<String, dynamic>>.from(members)
+          .map((e) => e['user_id']?.toString())
+          .whereType<String>()
+          .toList();
+      final peerId = ids.firstWhere((id) => id != me, orElse: () => '');
+      if (peerId.isEmpty) return;
+
+      for (final t in _userTables) {
+        try {
+          final row = await supabase
+              .from(t)
+              .select('id, username, login, avatar')
+              .eq('id', peerId)
+              .maybeSingle();
+          if (row != null) {
+            if (!mounted) return;
+            setState(() => _peerUser = Map<String, dynamic>.from(row));
+            return;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadMuteState() async {
@@ -282,7 +326,46 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.chatName),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        title: InkWell(
+          onTap: _peerUser == null
+              ? null
+              : () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          UserProfilePage(userId: _peerUser!['id'].toString()),
+                    ),
+                  );
+                },
+          borderRadius: BorderRadius.circular(8),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: const Color(0xFF7C3AED),
+                backgroundImage: (_peerUser?['avatar'] as String?)?.isNotEmpty ==
+                        true
+                    ? NetworkImage(_peerUser!['avatar'] as String)
+                    : null,
+                child: (_peerUser?['avatar'] as String?)?.isNotEmpty == true
+                    ? null
+                    : const Icon(Icons.person, size: 16, color: Colors.white),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  (_peerUser?['username'] as String?) ?? widget.chatName,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
         backgroundColor: const Color(0xFF0F0F1A),
         elevation: 0,
         actions: [

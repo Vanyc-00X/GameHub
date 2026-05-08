@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 const Duration kAuctionSnipeExtension = Duration(minutes: 2);
 const int kMinBidStep = 50;
+const List<String> _userTableCandidates = ['User', 'users', 'user', '"User"'];
 
 /// Логика аукционов по схеме [Auction_items] / [Bid_auction].
 class AuctionService {
@@ -89,6 +90,19 @@ class AuctionService {
     final current = await currentPriceForAuction(auctionId, startPrice);
     final newPrice = current + kMinBidStep;
     final bidCount = (row['bid_count'] as num?)?.toInt() ?? 0;
+    final userTable = await _resolveUserTable();
+    if (userTable == null) {
+      return 'Таблица пользователей не найдена';
+    }
+    final meRow = await _c
+        .from(userTable)
+        .select('scope')
+        .eq('id', user.id)
+        .maybeSingle();
+    final myScope = (meRow?['scope'] as num?)?.toInt() ?? 0;
+    if (myScope < newPrice) {
+      return 'Недостаточно очков: нужно $newPrice ⭐, у вас $myScope ⭐';
+    }
 
     try {
       await _c.from('Bid_auction').insert({
@@ -115,6 +129,9 @@ class AuctionService {
       'ended_at': _toDbTimestamp(newEnded),
       'bid_count': bidCount + 1,
     }).eq('id', auctionId);
+    await _c.from(userTable).update({
+      'scope': myScope - newPrice,
+    }).eq('id', user.id);
 
     return null;
   }
@@ -130,5 +147,15 @@ class AuctionService {
     } catch (_) {
       return null;
     }
+  }
+
+  Future<String?> _resolveUserTable() async {
+    for (final table in _userTableCandidates) {
+      try {
+        await _c.from(table).select('id').limit(1);
+        return table;
+      } catch (_) {}
+    }
+    return null;
   }
 }

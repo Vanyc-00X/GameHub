@@ -35,7 +35,16 @@ class _BottomAuctionState extends State<BottomAuction>
     _tab = TabController(length: 2, vsync: this);
     _loadAuctions();
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      final hasExpired = _auctions.any((a) {
+        final end = DateTime.tryParse('${a['ended_at']}');
+        return end != null && DateTime.now().isAfter(end);
+      });
+      if (hasExpired) {
+        _loadAuctions();
+      } else {
+        setState(() {});
+      }
     });
   }
 
@@ -426,24 +435,6 @@ class _BottomAuctionState extends State<BottomAuction>
               ],
             ),
           ),
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: IconButton(
-              icon: const Icon(Icons.add_circle, color: Colors.white, size: 32),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const CreateAuctionPage(),
-                  ),
-                ).then((_) => _loadAuctions());
-              },
-              tooltip: 'Создать аукцион',
-            ),
-          ),
         ],
       ),
     );
@@ -495,26 +486,6 @@ class _BottomAuctionState extends State<BottomAuction>
               const Text(
                 'Создай аукцион — его увидят все',
                 style: TextStyle(color: Colors.white54, fontSize: 14),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const CreateAuctionPage(),
-                    ),
-                  ).then((_) => _loadAuctions());
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Создать аукцион'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF7C3AED),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
-                  ),
-                ),
               ),
             ],
           ),

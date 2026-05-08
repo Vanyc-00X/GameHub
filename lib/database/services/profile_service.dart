@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'rating_service.dart';
 import '../user_table/user_table.dart';
 
 class ProfileService {
@@ -41,13 +42,15 @@ class ProfileService {
     final completedAuctions = auctions.length - activeAuctions;
 
     final scope = (user['scope'] as num?)?.toInt() ?? 0;
+    final stats = await RatingService.instance.getStats(userId);
     return {
       'user': user,
       'points': scope,
       'postsCount': postsCount,
       'activeAuctions': activeAuctions,
       'completedAuctions': completedAuctions,
-      'rating': 4.9,
+      'rating': stats.avgStars,
+      'ratingCount': stats.count,
       'joinedAt': user['created_at'],
     };
   }

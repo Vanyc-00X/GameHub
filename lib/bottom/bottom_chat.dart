@@ -4,6 +4,7 @@ import 'package:timeago/timeago.dart' as timeago;
 import '../database/services/chat_service.dart';
 import '../widgets/notification_bell.dart';
 import 'mini_page/chat_screen.dart';
+import 'mini_page/user_profile_page.dart';
 
 // ? Чаты: личные, каналы, группы (как в Telegram) + обзор для вступления
 class BottomChat extends StatefulWidget {
@@ -454,6 +455,9 @@ class _BottomChatState extends State<BottomChat> with TickerProviderStateMixin {
     final chat = item['chat'] as Map<String, dynamic>?;
     if (chat == null) return const SizedBox.shrink();
     final name = chat['namechat'] as String? ?? 'Чат';
+    final peer = chat['peer'] as Map<String, dynamic>?;
+    final peerAvatar = peer?['avatar'] as String?;
+    final peerId = peer?['id']?.toString();
     final lastMsgList = item['last_message'] as List<dynamic>? ?? [];
     final lastMsg = lastMsgList.isNotEmpty
         ? (lastMsgList.first['content'] as String? ?? '…')
@@ -477,15 +481,45 @@ class _BottomChatState extends State<BottomChat> with TickerProviderStateMixin {
         );
       },
       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-      leading: CircleAvatar(
-        backgroundColor: accent.withValues(alpha: 0.3),
-        child: Icon(typeIcon, color: accent, size: 24),
+      leading: GestureDetector(
+        onTap: peerId == null
+            ? null
+            : () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => UserProfilePage(userId: peerId),
+                  ),
+                );
+              },
+        child: CircleAvatar(
+          backgroundColor: accent.withValues(alpha: 0.3),
+          backgroundImage:
+              (peerAvatar != null && peerAvatar.isNotEmpty)
+                  ? NetworkImage(peerAvatar)
+                  : null,
+          child: (peerAvatar == null || peerAvatar.isEmpty)
+              ? Icon(typeIcon, color: accent, size: 24)
+              : null,
+        ),
       ),
-      title: Text(
-        name,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w600,
+      title: GestureDetector(
+        onTap: peerId == null
+            ? null
+            : () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => UserProfilePage(userId: peerId),
+                  ),
+                );
+              },
+        child: Text(
+          name,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
       subtitle: Text(
