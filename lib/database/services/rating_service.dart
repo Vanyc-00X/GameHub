@@ -81,6 +81,35 @@ class RatingService {
     }
   }
 
+  Future<Map<String, RatingStats>> getStatsBatch(Iterable<String> userIds) async {
+    final ids = userIds.where((id) => id.isNotEmpty).toSet().toList();
+    if (ids.isEmpty) return const {};
+
+    try {
+      final view = await _resolveFirstExisting(_ratingStatsViews);
+      if (view == null) return const {};
+
+      final rows = await _sb
+          .from(view)
+          .select('user_id, avg_stars, ratings_count')
+          .inFilter('user_id', ids);
+
+      final result = <String, RatingStats>{};
+      for (final row in List<Map<String, dynamic>>.from(rows)) {
+        final userId = row['user_id']?.toString();
+        if (userId == null) continue;
+        result[userId] = RatingStats(
+          avgStars: (row['avg_stars'] as num?)?.toDouble() ?? 0,
+          count: (row['ratings_count'] as num?)?.toInt() ?? 0,
+        );
+      }
+      return result;
+    } catch (e) {
+      debugPrint('RatingService.getStatsBatch ошибка: $e');
+      return const {};
+    }
+  }
+
   Future<List<Map<String, dynamic>>> latestReviews(
     String userId, {
     int limit = 10,

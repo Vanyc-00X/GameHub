@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../database/auction_service.dart';
 import '../database/services/rating_service.dart';
+import '../database/steam_store_service.dart';
 import 'mini_page/reate_auction_page.dart';
 import 'mini_page/rate_user_sheet.dart';
 
@@ -87,6 +88,15 @@ class _BottomAuctionState extends State<BottomAuction>
       for (final row in list) {
         final ownerId = row['owner_id']?.toString();
         row['User'] = activeUsers[ownerId] ?? const <String, dynamic>{};
+      }
+      final sellerRatings = await RatingService.instance.getStatsBatch(
+        list.map((e) => e['owner_id']?.toString()).whereType<String>(),
+      );
+      for (final row in list) {
+        final ownerId = row['owner_id']?.toString();
+        row['sellerRating'] = ownerId != null
+            ? (sellerRatings[ownerId] ?? const RatingStats.empty())
+            : const RatingStats.empty();
       }
       final ids = list.map((e) => (e['id'] as num).toInt()).toList();
 
@@ -506,7 +516,10 @@ class _BottomAuctionState extends State<BottomAuction>
             title: title,
             seller:
                 '@${(a['User'] as Map<String, dynamic>?)?['login'] ?? 'unknown'}',
-            imageUrl: a['url_item'] as String? ?? '',
+            sellerRating: a['sellerRating'] as RatingStats? ??
+                const RatingStats.empty(),
+            imageUrl: SteamStoreService.instance
+                .resolveAuctionImageUrl(a['url_item'] as String?),
             bidCount: (a['bid_count'] as num?)?.toInt() ?? 0,
             timeLeft: _formatTimeRemaining('${a['ended_at']}'),
             currentPoints: _formatPoints(cur),
@@ -552,7 +565,8 @@ class _BottomAuctionState extends State<BottomAuction>
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
           child: _FinishedCard(
             title: a['title'] as String? ?? 'Лот',
-            imageUrl: a['url_item'] as String? ?? '',
+            imageUrl: SteamStoreService.instance
+                .resolveAuctionImageUrl(a['url_item'] as String?),
             roleLabel: isOwner ? 'Вы продавец' : 'Вы покупатель',
             counterparty: target,
             onRate: (ownerId == null || winnerId == null || alreadyRated)
@@ -569,6 +583,7 @@ class _BottomAuctionState extends State<BottomAuction>
 class _AuctionCardDb extends StatelessWidget {
   final String title;
   final String seller;
+  final RatingStats sellerRating;
   final String imageUrl;
   final int bidCount;
   final String timeLeft;
@@ -578,6 +593,7 @@ class _AuctionCardDb extends StatelessWidget {
   const _AuctionCardDb({
     required this.title,
     required this.seller,
+    required this.sellerRating,
     required this.imageUrl,
     required this.bidCount,
     required this.timeLeft,
@@ -639,6 +655,8 @@ class _AuctionCardDb extends StatelessWidget {
                   'Продавец: $seller',
                   style: const TextStyle(color: Colors.grey, fontSize: 12),
                 ),
+                const SizedBox(height: 4),
+                _SellerRatingBadge(rating: sellerRating),
                 const SizedBox(height: 12),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -688,6 +706,46 @@ class _AuctionCardDb extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SellerRatingBadge extends StatelessWidget {
+  final RatingStats rating;
+
+  const _SellerRatingBadge({required this.rating});
+
+  @override
+  Widget build(BuildContext context) {
+    if (rating.count == 0) {
+      return const Text(
+        'Рейтинг продавца: нет отзывов',
+        style: TextStyle(color: Colors.white38, fontSize: 12),
+      );
+    }
+
+    return Row(
+      children: [
+        const Text(
+          'Рейтинг продавца:',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(width: 6),
+        const Icon(Icons.star_rounded, size: 14, color: Color(0xFFF59E0B)),
+        const SizedBox(width: 2),
+        Text(
+          rating.avgStars.toStringAsFixed(1),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        Text(
+          ' (${rating.count})',
+          style: const TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+      ],
     );
   }
 }

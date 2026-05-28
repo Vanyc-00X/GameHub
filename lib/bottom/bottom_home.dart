@@ -476,7 +476,7 @@ class _AuctionCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('$price ₽', style: const TextStyle(color: Color(0xFFF59E0B), fontWeight: FontWeight.bold)),
+              Text('$price ⭐', style: const TextStyle(color: Color(0xFFF59E0B), fontWeight: FontWeight.bold)),
               Text(time, style: const TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold)),
             ],
           )

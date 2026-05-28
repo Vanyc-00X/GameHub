@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../database/steam_store_service.dart';
+
 class AuctionsListPage extends StatefulWidget {
   const AuctionsListPage({super.key});
 
@@ -341,7 +343,8 @@ class _AuctionsListPageState extends State<AuctionsListPage>
     bool showWinner = false,
   }) {
     final title = auction['title'] ?? 'Без названия';
-    final imageUrl = auction['url_item'] as String?;
+    final imageUrl = SteamStoreService.instance
+        .resolveAuctionImageUrl(auction['url_item'] as String?);
     final startPrice = auction['start_price'] as int? ?? 0;
     final bidCount = auction['bid_count'] as int? ?? 0;
     final endedAt = auction['ended_at'] as String?;
@@ -360,7 +363,7 @@ class _AuctionsListPageState extends State<AuctionsListPage>
             borderRadius: const BorderRadius.horizontal(
               left: Radius.circular(16),
             ),
-            child: imageUrl != null && imageUrl.isNotEmpty
+            child: imageUrl.isNotEmpty
                 ? Image.network(
                     imageUrl,
                     height: 120,
@@ -456,7 +459,8 @@ class _AuctionsListPageState extends State<AuctionsListPage>
 
   Widget _buildBidCard(Map<String, dynamic> auction) {
     final title = auction['title'] ?? 'Без названия';
-    final imageUrl = auction['url_item'] as String?;
+    final imageUrl = SteamStoreService.instance
+        .resolveAuctionImageUrl(auction['url_item'] as String?);
     final startPrice = auction['start_price'] as int? ?? 0;
     final myBidPrice = auction['my_bid_price'] as int? ?? 0;
     final bidTime = auction['bid_time'] as String?;
@@ -481,7 +485,7 @@ class _AuctionsListPageState extends State<AuctionsListPage>
             borderRadius: const BorderRadius.horizontal(
               left: Radius.circular(16),
             ),
-            child: imageUrl != null && imageUrl.isNotEmpty
+            child: imageUrl.isNotEmpty
                 ? Image.network(
                     imageUrl,
                     height: 120,
